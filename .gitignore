@@ -1,3 +1,10 @@
 target/
 data/
 *.log
+
+# Environment & Secrets (NEVER COMMIT)
+.env
+.env.prod
+.env.local
+.env.*.local
+.env.production
