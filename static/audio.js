@@ -36,7 +36,7 @@
     master.gain.value = muted ? 0 : 1;
     master.connect(ctx.destination);
     musicGain = ctx.createGain();
-    musicGain.gain.value = 0.14;
+    musicGain.gain.value = 0.09;
     musicGain.connect(master);
     sfxGain = ctx.createGain();
     sfxGain.gain.value = 0.85;
@@ -81,24 +81,41 @@
   }
 
   // ------------------------------------------------------------------
-  // Ambient background music: a soft drone plus sparse bell notes.
+  // Background music: a slow, quiet "western" theme — soft acoustic plucks
+  // over an Am–F–C–G progression, a barely-there drone, and the occasional
+  // lonely whistle. Fully synthesized, so still no audio files.
   // ------------------------------------------------------------------
-  var PENT = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33];
+  var PROGRESSION = [
+    { bass: 110.0, notes: [220.0, 261.63, 329.63] }, // Am
+    { bass: 87.31, notes: [174.61, 220.0, 261.63] }, // F
+    { bass: 65.41, notes: [130.81, 164.81, 196.0] }, // C
+    { bass: 98.0, notes: [196.0, 246.94, 293.66] }, // G
+  ];
+  var BAR_SECONDS = 3.4;
+  var barCount = 0;
 
   function startMusic() {
-    if (!ctx || started) { return; }
+    if (!ctx || started) {
+      return;
+    }
     started = true;
+    drone();
+    scheduleBar();
+  }
+
+  // A low drone that just holds the theme together in the background.
+  function drone() {
     var t = now();
-    [130.81, 196.0].forEach(function (f, i) {
+    [110.0, 164.81].forEach(function (f, i) {
       var o = ctx.createOscillator();
       o.type = "sine";
       o.frequency.value = f;
       var g = ctx.createGain();
-      g.gain.value = i ? 0.03 : 0.045;
+      g.gain.value = i ? 0.018 : 0.026;
       var lfo = ctx.createOscillator();
-      lfo.frequency.value = 0.05 + i * 0.03;
+      lfo.frequency.value = 0.06 + i * 0.03;
       var lg = ctx.createGain();
-      lg.gain.value = 0.018;
+      lg.gain.value = 0.01;
       lfo.connect(lg);
       lg.connect(g.gain);
       lfo.start(t);
@@ -106,28 +123,91 @@
       g.connect(musicGain);
       o.start(t);
     });
-    scheduleBell(t + 0.4);
   }
 
-  function scheduleBell(t) {
-    if (!ctx) { return; }
-    var f = PENT[(Math.random() * PENT.length) | 0];
-    var o = ctx.createOscillator();
-    o.type = "triangle";
-    o.frequency.value = f;
+  // A soft plucked-string note: two slightly detuned voices through a lowpass.
+  function pluck(freq, when, dur, peak) {
+    var o1 = ctx.createOscillator();
+    o1.type = "triangle";
+    o1.frequency.value = freq;
+    var o2 = ctx.createOscillator();
+    o2.type = "sawtooth";
+    o2.frequency.value = freq * 1.004;
     var lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
-    lp.frequency.value = 1700;
+    lp.frequency.value = 2400;
+    lp.Q.value = 0.6;
     var g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.07, t + 0.03);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
-    o.connect(lp);
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(peak, when + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    o1.connect(lp);
+    o2.connect(lp);
     lp.connect(g);
     g.connect(musicGain);
-    o.start(t);
-    o.stop(t + 2.3);
-    setTimeout(function () { scheduleBell(now() + 0.1); }, 1500 + Math.random() * 2400);
+    o1.start(when);
+    o2.start(when);
+    o1.stop(when + dur + 0.03);
+    o2.stop(when + dur + 0.03);
+  }
+
+  // A lonely whistled line, with a gentle vibrato.
+  function whistle(freq, when, dur, peak) {
+    var o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(freq, when);
+    var lfo = ctx.createOscillator();
+    lfo.frequency.value = 5.5;
+    var lg = ctx.createGain();
+    lg.gain.value = freq * 0.007;
+    lfo.connect(lg);
+    lg.connect(o.frequency);
+    lfo.start(when);
+    lfo.stop(when + dur + 0.1);
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(peak, when + 0.18);
+    g.gain.setValueAtTime(peak, when + Math.max(0.2, dur - 0.25));
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    o.connect(g);
+    g.connect(musicGain);
+    o.start(when);
+    o.stop(when + dur + 0.1);
+  }
+
+  // Lay down one slow bar, then queue the next.
+  function scheduleBar() {
+    if (!ctx) {
+      return;
+    }
+    // Only schedule while the clock is actually running, so notes can't pile
+    // up on the audio timeline while the context is suspended.
+    if (ctx.state !== "running") {
+      setTimeout(scheduleBar, 600);
+      return;
+    }
+    var t = now() + 0.05;
+    var ch = PROGRESSION[barCount % PROGRESSION.length];
+
+    pluck(ch.bass, t, 2.8, 0.05);
+
+    for (var b = 0; b < 4; b++) {
+      if (Math.random() < 0.5) {
+        var n = ch.notes[(Math.random() * ch.notes.length) | 0];
+        if (Math.random() < 0.45) {
+          n *= 2;
+        }
+        pluck(n, t + b * (BAR_SECONDS / 4) + Math.random() * 0.08, 1.15, 0.045);
+      }
+    }
+
+    if (barCount % 4 === 2) {
+      whistle(ch.notes[1] * 2, t + 0.5, 1.5, 0.04);
+      whistle(ch.notes[2] * 2, t + 2.1, 1.1, 0.036);
+    }
+
+    barCount += 1;
+    setTimeout(scheduleBar, BAR_SECONDS * 1000);
   }
 
   // ------------------------------------------------------------------
