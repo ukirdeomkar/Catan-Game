@@ -1,0 +1,24 @@
+[Unit]
+Description=Catan multiplayer game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=catan
+Group=catan
+WorkingDirectory=/opt/catan
+ExecStart=/opt/catan/catan
+Environment=CATAN_ADDR=127.0.0.1:8080
+Environment=CATAN_DATA_DIR=/var/lib/catan
+Restart=on-failure
+RestartSec=2
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/catan
+
+[Install]
+WantedBy=multi-user.target
