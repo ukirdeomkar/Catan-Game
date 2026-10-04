@@ -182,6 +182,9 @@ footer.site a:hover{text-decoration:underline}
 #install-bar #install-btn{background:#2e7dd1;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-size:14px;font-weight:700;cursor:pointer;min-height:36px}
 #install-bar #install-btn:hover{background:#3a8fe0}
 #install-bar #install-close{background:transparent;border:0;color:#8ea0af;font-size:14px;cursor:pointer;padding:4px 6px}
+#audio-toggle{margin-left:auto;background:#37424e;border:0;color:#e9eef2;border-radius:999px;width:42px;height:42px;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:0 0 auto;-webkit-tap-highlight-color:transparent}
+#audio-toggle:hover{background:#44515f}
+#audio-toggle.off{opacity:.55}
 "#;
 
 fn shell(title: &str, body: Markup) -> Markup {
@@ -213,6 +216,7 @@ fn shell(title: &str, body: Markup) -> Markup {
                 script src="/static/trade.js" defer {}
                 script src="/static/guide.js" defer {}
                 script src="/static/discard.js" defer {}
+                script src="/static/audio.js" defer {}
                 script src="/static/pwa.js" defer {}
             }
             body {
@@ -222,6 +226,7 @@ fn shell(title: &str, body: Markup) -> Markup {
                             img src="/static/branding/logo-128.webp" alt="Play Catanou logo" width="42" height="42";
                             span.bt { "Play Catanou" }
                         }
+                        button #audio-toggle type="button" title="Toggle sound" aria-label="Toggle sound" { "🔊" }
                     }
                 }
                 (body)

@@ -63,7 +63,7 @@ src/
     resources.rs Resource, ResourceHand, Bundle, costs, DevCard, deck
     scoring.rs   Longest Road, Largest Army, victory points, win check
     rng.rs       Rng64 (serializable splitmix64) — enables exact snapshot resume
-static/          htmx.min.js + sse.js (vendored) + guide/trade/discard/timer/lobby/pwa.js + sw.js
+static/          htmx.min.js + sse.js (vendored) + guide/trade/discard/timer/lobby/pwa/audio.js + sw.js
 Cargo.toml       deps + [profile.release] size tuning
 Dockerfile, docker-compose.yml, deploy/catan.service, README.md
 ```
