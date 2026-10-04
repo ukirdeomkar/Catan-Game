@@ -222,6 +222,17 @@ impl Board {
             }
         }
 
+        // Hex adjacency (hexes sharing an edge), used to keep identical
+        // terrain from clustering side by side.
+        let mut hex_neighbors: Vec<Vec<usize>> = vec![Vec::new(); coords.len()];
+        for e in &edges {
+            if e.hexes.len() == 2 {
+                let (a, b) = (e.hexes[0], e.hexes[1]);
+                hex_neighbors[a].push(b);
+                hex_neighbors[b].push(a);
+            }
+        }
+
         // --- Terrain (4 wood, 4 wheat, 4 sheep, 3 brick, 3 ore, 1 desert) ---
         let mut terrains = vec![
             Terrain::Wood,
@@ -245,6 +256,7 @@ impl Board {
             Terrain::Desert,
         ];
         terrains.shuffle(rng);
+        spread_terrains(&mut terrains, &hex_neighbors, rng);
 
         // --- Number tokens: official "alphabetical spiral" placement. ---
         // The 18 tokens carry the fixed numerals below in letter order
@@ -375,6 +387,53 @@ fn spiral_order(coords: &[(i32, i32)], start_deg: f64) -> Vec<usize> {
             .then_with(|| ccw_from_start(a).partial_cmp(&ccw_from_start(b)).unwrap())
     });
     idx
+}
+
+/// Keep identical terrain from clustering while leaving the layout random.
+/// A global cap on how many same-terrain pairs may share an edge (the long
+/// runs of one resource are what look wrong) is enforced by random swaps:
+/// improving swaps are always taken, and occasional worse swaps are allowed
+/// so the search can escape local minima. Official counts are preserved.
+fn spread_terrains<R: Rng>(terrains: &mut [Terrain], neighbors: &[Vec<usize>], rng: &mut R) {
+    use rand::RngExt;
+    const MAX_PAIRS: usize = 2;
+
+    let same_pairs = |t: &[Terrain]| -> usize {
+        let mut p = 0usize;
+        for (i, ti) in t.iter().enumerate() {
+            for &j in &neighbors[i] {
+                if j > i && *ti == t[j] {
+                    p += 1;
+                }
+            }
+        }
+        p
+    };
+
+    let n = terrains.len();
+    let mut cur = same_pairs(terrains);
+    let mut attempts = 0usize;
+    let mut temperature = 1.5f64;
+    while cur > MAX_PAIRS && attempts < 20_000 {
+        attempts += 1;
+        let i = rng.random_range(0..n);
+        let j = rng.random_range(0..n);
+        if i == j || terrains[i] == terrains[j] {
+            continue;
+        }
+        terrains.swap(i, j);
+        let next = same_pairs(terrains);
+        let delta = next as f64 - cur as f64;
+        if delta <= 0.0 || rng.random::<f64>() < (-delta / temperature).exp() {
+            cur = next;
+        } else {
+            terrains.swap(i, j);
+        }
+        temperature *= 0.999;
+        if temperature < 0.05 {
+            temperature = 1.5;
+        }
+    }
 }
 
 fn hex_coordinates() -> Vec<(i32, i32)> {
