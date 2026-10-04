@@ -183,6 +183,32 @@ fn robber_blocks_production() {
     assert_eq!(s.players[0].resources.get(resource), 0);
 }
 
+#[test]
+fn moving_robber_onto_single_victim_auto_steals() {
+    let mut s = fresh(2, 60);
+    for v in s.board.vertices.iter_mut() {
+        v.owner = None;
+        v.building = Building::None;
+    }
+    for p in s.players.iter_mut() {
+        p.resources = ResourceHand::default();
+    }
+    // One opponent building adjacent to hex 0: exactly one steal candidate.
+    let hex = 0usize;
+    let v = s.board.hexes[hex].vertices[0];
+    s.place_building(1, v, Building::Settlement);
+    s.players[1].resources = ResourceHand([1, 0, 0, 0, 0]);
+    s.current = 0;
+    s.robber_hex = 1;
+    s.phase = Phase::MoveRobber { after_knight: false };
+
+    s.apply(0, &Action::MoveRobber { hex }).unwrap();
+
+    assert!(matches!(s.phase, Phase::Play), "auto-steal must resolve to Play");
+    assert_eq!(s.players[0].resources.total(), 1, "actor steals one card");
+    assert_eq!(s.players[1].resources.total(), 0);
+}
+
 // ---------------------------------------------------------------------------
 // Building rules
 // ---------------------------------------------------------------------------

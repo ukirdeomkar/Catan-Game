@@ -462,11 +462,13 @@ impl GameState {
         }
         self.robber_hex = hex;
         let terrain = self.board.hexes[hex].terrain.name();
+        let number = self.board.hexes[hex].number;
         let name = self.players[actor].name.clone();
-        self.push_log(
-            Some(actor),
-            format!("{name} moves the robber to the {terrain}."),
-        );
+        let at = match number {
+            Some(n) => format!("{terrain} ({n})"),
+            None => terrain.to_string(),
+        };
+        self.push_log(Some(actor), format!("{name} moves the robber to the {at}."));
 
         let candidates = self.steal_candidates(hex, actor);
         match candidates.len() {
@@ -475,6 +477,9 @@ impl GameState {
                 let _ = after_knight;
             }
             1 => {
+                // Exactly one victim: skip the chooser and steal automatically.
+                // The phase must be `Steal` for `steal_from` to accept the call.
+                self.phase = Phase::Steal { hex };
                 self.steal_from(actor, Some(candidates[0]))?;
             }
             _ => {

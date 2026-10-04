@@ -2,3 +2,8 @@ target/
 data/
 .git/
 *.log
+branding-src/
+.github/
+docs/
+scripts/
+deploy/

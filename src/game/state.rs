@@ -35,6 +35,44 @@ impl Color {
     pub const ALL: [Color; 4] = [Color::Red, Color::Blue, Color::Orange, Color::White];
 }
 
+/// Difficulty tier for an AI bot. Distinct policies live in `crate::bot`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub enum BotLevel {
+    Easy,
+    #[default]
+    Medium,
+    Hard,
+}
+
+impl BotLevel {
+    pub const ALL: [BotLevel; 3] = [BotLevel::Easy, BotLevel::Medium, BotLevel::Hard];
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            BotLevel::Easy => "easy",
+            BotLevel::Medium => "medium",
+            BotLevel::Hard => "hard",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BotLevel::Easy => "Easy",
+            BotLevel::Medium => "Medium",
+            BotLevel::Hard => "Hard",
+        }
+    }
+
+    pub fn from_slug(s: &str) -> Option<BotLevel> {
+        Some(match s {
+            "easy" => BotLevel::Easy,
+            "medium" => BotLevel::Medium,
+            "hard" => BotLevel::Hard,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Player {
     pub id: PlayerId,

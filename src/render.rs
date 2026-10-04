@@ -2,7 +2,7 @@ use crate::game::board::{Board, Building, PortKind, Terrain};
 use crate::game::resources::{
     ALL_RESOURCES, Bundle, COST_CITY, COST_DEV, COST_ROAD, COST_SETTLEMENT, DevCard, Resource,
 };
-use crate::game::state::{Color, GameState, Phase, PlayerId};
+use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerId};
 use crate::state::{RoomData, ViewMode};
 use maud::{DOCTYPE, Markup, html};
 
@@ -43,11 +43,13 @@ fn terrain_glyph(t: Terrain) -> &'static str {
 
 const CSS: &str = r#"
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:radial-gradient(circle at 50% 0%,#1a2430 0%,#12181f 70%);color:#e9eef2;-webkit-text-size-adjust:100%}
+html{height:100%}
+body{margin:0;min-height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#e9eef2;-webkit-text-size-adjust:100%;background-color:#0e1319;background-image:linear-gradient(rgba(9,12,17,.80),rgba(9,12,17,.93)),url("/static/branding/landscape.webp");background-size:cover;background-position:center top;background-repeat:no-repeat;background-attachment:fixed}
+@media(max-width:760px){body{background-image:linear-gradient(rgba(9,12,17,.84),rgba(9,12,17,.94)),url("/static/branding/potrait.webp")}}
 a{color:#6cc0ff}
 h1,h2,h3{margin:.2em 0}
 .wrap{max-width:1180px;margin:0 auto;padding:14px}
-.card{background:#1e262e;border:1px solid #2c3742;border-radius:10px;padding:12px;margin-bottom:12px}
+.card{background:rgba(22,29,36,.86);border:1px solid #2c3742;border-radius:10px;padding:12px;margin-bottom:12px}
 .btn{background:#2e7dd1;color:#fff;border:0;border-radius:8px;padding:9px 13px;font-size:14px;cursor:pointer;min-height:38px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .btn:hover{background:#3a8fe0}
 .btn.sec{background:#37424e}
@@ -131,6 +133,13 @@ button.rcard{font:inherit;color:inherit;cursor:pointer;padding:0}
  .log{max-height:160px}
  #controls{position:sticky;top:0;z-index:20}
 }
+header.site .wrap{display:flex;align-items:center;gap:10px;padding-top:12px;padding-bottom:2px}
+.brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:inherit}
+.brand img{height:42px;width:42px;border-radius:11px;border:1px solid #ffffff26;box-shadow:0 3px 12px #000a;display:block}
+.brand .bt{font-weight:800;font-size:19px;letter-spacing:.4px;background:linear-gradient(#ffeaa7,#dfa032);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero{border-radius:14px;overflow:hidden;border:1px solid #ffffff1f;box-shadow:0 12px 40px #000b;margin-bottom:14px;background:#12181f}
+.hero img{display:block;width:100%;height:auto}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 "#;
 
 fn shell(title: &str, body: Markup) -> Markup {
@@ -140,14 +149,35 @@ fn shell(title: &str, body: Markup) -> Markup {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
+                meta name="theme-color" content="#8c1c13";
+                meta name="description" content="Play Catanou — a tiny self-hosted multiplayer Settlers of Catan.";
+                meta property="og:title" content="Play Catanou";
+                meta property="og:description" content="Create a room, share the code, and play Settlers of Catan with friends.";
+                meta property="og:image" content="/static/branding/og.jpg";
+                meta property="og:type" content="website";
                 title { (title) }
+                link rel="icon" href="/static/branding/favicon.ico" sizes="any";
+                link rel="icon" type="image/png" sizes="32x32" href="/static/branding/favicon-32.png";
+                link rel="icon" type="image/png" sizes="16x16" href="/static/branding/favicon-16.png";
+                link rel="apple-touch-icon" href="/static/branding/apple-touch-icon.png";
+                link rel="manifest" href="/static/branding/site.webmanifest";
                 style { (maud::PreEscaped(CSS)) }
                 script src="/static/htmx.min.js" defer {}
                 script src="/static/sse.js" defer {}
                 script src="/static/timer.js" defer {}
                 script src="/static/trade.js" defer {}
             }
-            body { (body) }
+            body {
+                header.site {
+                    div.wrap {
+                        a.brand href="/" {
+                            img src="/static/branding/logo-128.webp" alt="Play Catanou logo" width="42" height="42";
+                            span.bt { "Play Catanou" }
+                        }
+                    }
+                }
+                (body)
+            }
         }
     }
 }
@@ -157,9 +187,15 @@ fn shell(title: &str, body: Markup) -> Markup {
 // ---------------------------------------------------------------------------
 
 pub fn home_page(error: Option<&str>) -> Markup {
-    shell("Catan", html! {
+    shell("Play Catanou", html! {
         div.wrap {
-            h1 { "Settlers of Catan" }
+            div.hero {
+                picture {
+                    source media="(max-width:760px)" srcset="/static/branding/potrait.webp";
+                    img src="/static/branding/landscape.webp" alt="Play Catanou — based on the classic game of Catan";
+                }
+            }
+            h1.sr-only { "Play Catanou" }
             p.muted { "A tiny self-hosted Catan. Create a room and share the code, or join with a code." }
             @if let Some(e) = error { div.card #toasts { (e) } }
             div.card {
@@ -218,7 +254,7 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
                         @if data.is_host(&m.token) || m.is_bot {
                             div.pbadges {
                                 @if data.is_host(&m.token) { span { "host" } }
-                                @if m.is_bot { span { "bot" } }
+                                @if m.is_bot { span { "bot " (m.level.label()) } }
                             }
                         }
                     }
@@ -228,6 +264,11 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
         div.row {
             @if is_host {
                 form method="post" action=(format!("/room/{code}/add_bot")) {
+                    select name="level" {
+                        @for level in BotLevel::ALL {
+                            option value=(level.slug()) selected[level == BotLevel::default()] { (level.label()) }
+                        }
+                    }
                     button.btn.sec type="submit" disabled[data.members.len() >= 4] { "Add bot" }
                 }
                 form method="post" action=(format!("/room/{code}/start")) {
@@ -295,7 +336,7 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
     Fragments {
         status: status_frag(game, data),
         board: board_frag(game, data, viewer),
-        players: players_frag(game, viewer),
+        players: players_frag(game, data, viewer),
         hand: viewer.map(|v| hand_frag(game, &data.code, v)).unwrap_or_default(),
         controls: controls_frag(game, data, viewer),
         trades: trades_frag(game, &data.code, viewer),
@@ -372,7 +413,7 @@ fn status_frag(game: &GameState, data: &RoomData) -> Markup {
                     }
                     @if (game.phase == Phase::Play || matches!(game.phase, Phase::MoveRobber{..}))
                         && robber_placed(&game.board, game) {
-                        span.badge { "Robber: " (game.board.hexes[game.robber_hex].terrain.name()) }
+                        span.badge { "Robber: " (robber_label(game)) }
                     }
                 }
             }
@@ -553,6 +594,15 @@ fn robber_placed(board: &Board, game: &GameState) -> bool {
         .unwrap_or(true)
 }
 
+/// Human-readable robber location, e.g. `8 - Forest` (desert has no number).
+fn robber_label(game: &GameState) -> String {
+    let hex = &game.board.hexes[game.robber_hex];
+    match hex.number {
+        Some(n) => format!("{n} - {}", hex.terrain.name()),
+        None => hex.terrain.name().to_string(),
+    }
+}
+
 fn bounds(board: &Board) -> (f64, f64, f64, f64) {
     let mut minx = f64::MAX;
     let mut miny = f64::MAX;
@@ -658,7 +708,7 @@ fn port_marks(board: &Board) -> Vec<PortMark> {
 // Panels
 // ---------------------------------------------------------------------------
 
-fn players_frag(game: &GameState, viewer: Option<PlayerId>) -> Markup {
+fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
     html! {
         h3 { "Players" }
         div.players {
@@ -667,7 +717,12 @@ fn players_frag(game: &GameState, viewer: Option<PlayerId>) -> Markup {
                 @let is_turn = game.current == p.id;
                 div.pcard.me[is_me].turn[is_turn] {
                     span.pdot style=(format!("background:{}", color_hex(p.color))) {}
-                    div.pname title=(p.name.as_str()) { (p.name) }
+                    div.pname title=(p.name.as_str()) {
+                        (p.name)
+                        @if let Some(m) = data.members.get(p.id) {
+                            @if m.is_bot { span.muted { " " (m.level.label()) } }
+                        }
+                    }
                     div.pstats {
                         span title="Victory points" { "🏆" (game.public_victory_points(p.id)) }
                         span title="Resource cards" { "🎴" (p.resources.total()) }

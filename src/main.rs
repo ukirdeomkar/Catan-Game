@@ -5,6 +5,7 @@
 //! AI bots and the UI will, so dead-code analysis is disabled crate-wide.
 #![allow(dead_code)]
 
+mod bot;
 mod game;
 mod handlers;
 mod render;
@@ -41,6 +42,16 @@ async fn main() {
         loop {
             tick.tick().await;
             state::tick_turn_timers(&timers);
+        }
+    });
+
+    // Let AI bots take one action per tick so humans can watch the game unfold.
+    let bots = app.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(700));
+        loop {
+            tick.tick().await;
+            state::tick_bots(&bots);
         }
     });
 

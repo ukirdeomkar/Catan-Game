@@ -1,5 +1,9 @@
+use crate::bot;
 use crate::game::rng::Rng64;
-use crate::game::state::{Color, GameState, MAX_PLAYERS, MIN_PLAYERS, PlayerConfig};
+use crate::game::state::{
+    BotLevel, Color, GameState, MAX_PLAYERS, MIN_PLAYERS, Phase, PlayerConfig, PlayerId,
+    TradeResponse,
+};
 use rand::Rng;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
@@ -27,6 +31,8 @@ pub struct Member {
     pub name: String,
     pub color: Color,
     pub is_bot: bool,
+    #[serde(default)]
+    pub level: BotLevel,
     #[serde(default)]
     pub connected: bool,
     #[serde(default)]
@@ -81,8 +87,8 @@ impl RoomData {
         Color::ALL[0]
     }
 
-    /// Auto-place a bot if the host wants to fill the table.
-    pub fn add_bot(&mut self) -> bool {
+    /// Auto-place a bot at the host's chosen difficulty.
+    pub fn add_bot(&mut self, level: BotLevel) -> bool {
         if self.started || self.members.len() >= MAX_PLAYERS {
             return false;
         }
@@ -94,6 +100,7 @@ impl RoomData {
             name: format!("Bot {n}"),
             color,
             is_bot: true,
+            level,
             connected: true,
             last_seen_ms: now_ms(),
             mode: ViewMode::Normal,
@@ -195,6 +202,7 @@ impl AppState {
                 name,
                 color: Color::Red,
                 is_bot: false,
+                level: BotLevel::default(),
                 connected: true,
                 last_seen_ms: now_ms(),
                 mode: ViewMode::Normal,
@@ -249,6 +257,7 @@ impl AppState {
                     name,
                     color,
                     is_bot: false,
+                    level: BotLevel::default(),
                     connected: true,
                     last_seen_ms: now_ms(),
                     mode: ViewMode::Normal,
@@ -409,6 +418,94 @@ pub fn tick_turn_timers(app: &AppState) {
             room.bump();
         }
         if ended {
+            app.persist(&room);
+        }
+    }
+}
+
+/// Pick the bot that should act next in this room, if any.
+///
+/// Returns the player id and its difficulty. Handles every phase that needs
+/// input: setup placement, normal play (including responses to a shared trade
+/// offer), discards, and the robber flow.
+fn bot_actor(data: &RoomData, game: &GameState) -> Option<(PlayerId, BotLevel)> {
+    let level_of = |pid: PlayerId| -> Option<(PlayerId, BotLevel)> {
+        data.members
+            .get(pid)
+            .filter(|m| m.is_bot)
+            .map(|m| (pid, m.level))
+    };
+    match &game.phase {
+        Phase::Lobby | Phase::GameOver => None,
+        Phase::Setup => {
+            let pid = *game.setup_queue.get(game.setup_pos)?;
+            level_of(pid)
+        }
+        Phase::Play => {
+            // A shared offer on the table takes priority: bots answer before
+            // the turn continues.
+            if let Some(t) = &game.trade {
+                if let Some((pid, _)) = t
+                    .responses
+                    .iter()
+                    .find(|(p, r)| *r == TradeResponse::Pending && data.members.get(*p).is_some_and(|m| m.is_bot))
+                {
+                    return level_of(*pid);
+                }
+            }
+            level_of(game.current)
+        }
+        Phase::Discard => game
+            .pending_discards
+            .iter()
+            .copied()
+            .find(|p| data.members.get(*p).is_some_and(|m| m.is_bot))
+            .and_then(level_of),
+        Phase::MoveRobber { .. } | Phase::Steal { .. } => level_of(game.current),
+    }
+}
+
+/// Advance every room by one bot action (called on a short interval). Acting
+/// one step per tick keeps the pace watchable and avoids holding a room lock
+/// across multiple mutations.
+pub fn tick_bots(app: &AppState) {
+    let rooms: Vec<Arc<Room>> = app.rooms.read().unwrap().values().cloned().collect();
+    for room in rooms {
+        let planned = {
+            let data = room.data.lock().unwrap();
+            let Some(game) = data.game.as_ref() else {
+                continue;
+            };
+            if game.is_over() {
+                continue;
+            }
+            bot_actor(&data, game).map(|(pid, level)| (pid, bot::choose_action(game, pid, level)))
+        };
+        let Some((pid, action)) = planned else {
+            continue;
+        };
+        let applied = {
+            let mut data = room.data.lock().unwrap();
+            let Some(game) = data.game.as_mut() else {
+                continue;
+            };
+            match game.apply(pid, &action) {
+                Ok(()) => true,
+                // Defensive: never let a bot wedge a room. Fall back to a
+                // guaranteed-legal action for the phase if the policy errored.
+                Err(_) => bot::fallback_action(game, pid)
+                    .map(|a| game.apply(pid, &a).is_ok())
+                    .unwrap_or(false),
+            }
+        };
+        if applied {
+            let mut data = room.data.lock().unwrap();
+            data.last_activity_ms = now_ms();
+            if let Some(m) = data.members.get_mut(pid) {
+                m.last_seen_ms = now_ms();
+            }
+            drop(data);
+            room.bump();
             app.persist(&room);
         }
     }

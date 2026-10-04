@@ -1,5 +1,6 @@
 use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
+use crate::game::state::BotLevel;
 use crate::render;
 use crate::state::{AppState, JoinError, Room, ViewMode, now_ms};
 use axum::{
@@ -517,19 +518,24 @@ async fn add_bot(
     State(app): State<Arc<AppState>>,
     Path(code): Path<String>,
     headers: HeaderMap,
+    Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let code = code.to_uppercase();
     let Some(room) = app.room(&code) else {
         return Html(render::error_page("Room not found.").into_string()).into_response();
     };
     let token = cookie_value(&headers, &cookie_name(&code)).unwrap_or_default();
+    let level = form
+        .get("level")
+        .and_then(|s| BotLevel::from_slug(s))
+        .unwrap_or_default();
     {
         let mut data = room.data.lock().unwrap();
         if !data.is_host(&token) {
             return Html(render::error_page("Only the host can add bots.").into_string())
                 .into_response();
         }
-        data.add_bot();
+        data.add_bot(level);
         data.last_activity_ms = now_ms();
     }
     room.bump();
