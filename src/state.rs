@@ -59,6 +59,12 @@ pub struct RoomData {
     /// Turn key the deadline was armed for, so the timer re-arms per turn.
     #[serde(skip)]
     pub turn_armed_for: u64,
+    /// Earliest unix-ms a bot may take its next action (pacing).
+    #[serde(skip)]
+    pub bot_next_ms: u64,
+    /// Context key for the bot's current decision; a change re-arms the delay.
+    #[serde(skip)]
+    pub bot_key: u64,
 }
 
 impl RoomData {
@@ -214,6 +220,8 @@ impl AppState {
             turn_seconds,
             turn_deadline_ms: 0,
             turn_armed_for: u64::MAX,
+            bot_next_ms: 0,
+            bot_key: u64::MAX,
         };
         let room = Room::new(data);
         self.rooms
@@ -465,21 +473,64 @@ fn bot_actor(data: &RoomData, game: &GameState) -> Option<(PlayerId, BotLevel)> 
     }
 }
 
-/// Advance every room by one bot action (called on a short interval). Acting
-/// one step per tick keeps the pace watchable and avoids holding a room lock
-/// across multiple mutations.
+/// Delay before a bot's first action in a new decision context (turn, setup
+/// placement, robber step, …) and between its subsequent actions in the same
+/// one. Keeps bot turns watchable (roughly 10–20s) instead of instant.
+const BOT_FIRST_DELAY_MS: u64 = 4500;
+const BOT_STEP_DELAY_MS: u64 = 2500;
+
+/// A value that changes only when the bot faces a genuinely new decision, so a
+/// fresh "first action" delay is applied per turn/phase but not per sub-step.
+fn bot_context_key(game: &GameState, pid: PlayerId) -> u64 {
+    let phase = match game.phase {
+        Phase::Lobby => 0u64,
+        Phase::Setup => 1,
+        Phase::Play => 2,
+        Phase::Discard => 3,
+        Phase::MoveRobber { .. } => 4,
+        Phase::Steal { .. } => 5,
+        Phase::GameOver => 6,
+    };
+    (pid as u64) << 40
+        | (game.turn as u64) << 16
+        | (phase << 8)
+        | (game.setup_pos as u64 & 0xff)
+}
+
+/// Advance every room by at most one paced bot action. Acting one step per
+/// tick keeps the pace watchable and avoids holding a room lock across
+/// multiple mutations.
 pub fn tick_bots(app: &AppState) {
+    let now = now_ms();
     let rooms: Vec<Arc<Room>> = app.rooms.read().unwrap().values().cloned().collect();
     for room in rooms {
         let planned = {
-            let data = room.data.lock().unwrap();
-            let Some(game) = data.game.as_ref() else {
+            let mut data = room.data.lock().unwrap();
+            let actor = match data.game.as_ref() {
+                Some(g) if !g.is_over() => bot_actor(&data, g),
+                _ => None,
+            };
+            let Some((pid, level)) = actor else {
                 continue;
             };
-            if game.is_over() {
+            let ctx = {
+                let g = data.game.as_ref().unwrap();
+                bot_context_key(g, pid)
+            };
+            if data.bot_key != ctx {
+                data.bot_key = ctx;
+                data.bot_next_ms = now + BOT_FIRST_DELAY_MS;
                 continue;
             }
-            bot_actor(&data, game).map(|(pid, level)| (pid, bot::choose_action(game, pid, level)))
+            if now < data.bot_next_ms {
+                continue;
+            }
+            let action = {
+                let g = data.game.as_ref().unwrap();
+                bot::choose_action(g, pid, level)
+            };
+            data.bot_next_ms = now + BOT_STEP_DELAY_MS;
+            Some((pid, action))
         };
         let Some((pid, action)) = planned else {
             continue;

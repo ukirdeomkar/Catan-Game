@@ -7,7 +7,8 @@ HTML + SVG board, live updates over SSE. No JavaScript framework, no database, n
 > known gaps, and next steps.
 
 - **2–4 players** per room, join by 4-letter room code
-- **Random board every game** — terrain, number tokens, and ports are regenerated each start
+- **Fresh board every game** — terrain, ports, and the spiral start corner are rerolled each
+  start; number tokens follow the official balanced spiral layout
 - **Full base-game rules** (see below)
 - Tiny footprint: single static binary, ~tens of MB of RAM, no external services
 
@@ -27,11 +28,14 @@ Complete base-game ruleset:
 - All five development cards: Knight, Victory Point, Road Building, Year of Plenty, Monopoly
 - Longest Road (≥5) and Largest Army (≥3), including correct ties and road-breaking by opponents
 - Win at 10 victory points
+- **AI bots** at three difficulty levels (Easy / Medium / Hard), added by the host in the lobby
+  for solo or co-op games. Bots play setup, building, dev cards, trades, and the robber, and
+  pace their turns so you can watch the game unfold.
 
 Also included: room codes + join links, per-room snapshots persisted to disk (survives restarts),
 reconnect via SSE, and a health endpoint.
 
-Planned: optional AI bots for solo/2-player games, optional expansion rules.
+Planned: optional expansion rules (Seafarers / Cities & Knights).
 
 ---
 
@@ -130,10 +134,13 @@ location / {
 ## How to play online
 
 1. One player creates a room and shares the 4-letter code (or the `/room/CODE` link).
-2. Everyone joins with the code and a name.
+2. Everyone joins with the code and a name — or the host uses **Add bot** to fill seats with
+   Easy / Medium / Hard AI opponents.
 3. The host presses **Start** (at least 2 players).
 4. Place your two starting settlements + roads when prompted.
-5. On your turn: **Roll**, then **build / trade / play dev cards**, then **End turn**.
+5. On your turn: **Roll**, then **build / trade / play dev cards**, then **End turn**. While it
+   is your turn a guided bar at the bottom of the screen offers build, trade, dev-card, and
+   end-turn actions, plus a compact view of your hand.
 
 Everything is server-authoritative, so there is no way to cheat from the client.
 
@@ -145,8 +152,9 @@ Everything is server-authoritative, so there is no way to cheat from the client.
 src/
   main.rs        Axum server, background room sweeper
   handlers.rs    HTTP routes, cookies/sessions, SSE, action dispatch
-  render.rs      maud HTML templates + inline SVG board
-  state.rs       Room registry, membership, on-disk snapshots
+  render.rs      maud HTML templates + inline SVG board + guided turn bar
+  state.rs       Room registry, membership, on-disk snapshots, bot driver
+  bot.rs         AI bot policy (Easy / Medium / Hard), one Action per call
   game/          Pure, synchronous, fully unit-tested rules engine
     board.rs       hex/vertex/edge geometry + random generation
     state.rs       GameState, players, phases
@@ -154,13 +162,13 @@ src/
     resources.rs   resources, costs, development cards
     scoring.rs     longest road, largest army, victory points
     rng.rs         tiny serializable PRNG (exact snapshot resume)
-static/          htmx + SSE extension (vendored)
+static/          htmx + SSE extension (vendored) + guide/trade/timer scripts
 ```
 
 - Player actions are `htmx` POSTs; the whole room is re-rendered and pushed to every
-  player over SSE. Each connection renders its own private view (hand, controls).
-- The rules engine never touches async or IO, so it is trivially testable and a future
-  bot is just another source of `Action`s against `GameState`.
+  player over SSE. Each connection renders its own private view (hand, controls, turn bar).
+- The rules engine never touches async or IO, so it is trivially testable, and bots are just
+  another source of `Action`s against `GameState` (see `src/bot.rs`).
 
 ---
 

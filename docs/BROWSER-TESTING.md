@@ -206,6 +206,8 @@ resource hand as cards, trade modal fits. Reset with
    room → rejoin or rejected for new names).
 2. Join with a second isolated context; the host's lobby updates live (no
    reload); start the game and confirm other lobby viewers auto-enter the game.
+   Host can also pick a bot difficulty and **Add bot** to fill seats (solo play),
+   and bots then act on their own with a visible pace.
 3. Setup: settlement + road for each player (snake order); board persists and
    pieces render (not cleared) after each click.
 4. Play: roll (two dice with pips + total), build road/settlement/city, buy dev.
@@ -220,7 +222,25 @@ resource hand as cards, trade modal fits. Reset with
 
 ---
 
-## 11. Gotchas (learned the hard way)
+## 11. Guided turn bar
+
+When it is your turn in `Phase::Play`, `#turn` holds the action UI and `guide.js`
+hides `#controls`. States:
+
+- `.tg` — full-screen roll prompt, dismissable via `[data-tg-dismiss]`.
+- `.tg-bar` (bottom, `position:fixed`) — build 🛠 sub-menu, trade **⇄** (only with
+  cards), dev cards 🃏, and **End turn** ▶.
+- `.tg-sub[data-sub="build"]` — road 🛣 / settlement 🏠 / city 🏙 / back ←.
+
+`data-step` (`roll` / `build` / `menu`) drives re-renders on each SSE swap. Note
+the base rule `.tg-sub[hidden]{display:none}`: `[hidden]` alone loses to the
+author rule `.tg-menu,.tg-sub{display:flex}`. Verify the bar is fully on-screen on
+mobile (it is fixed to the viewport bottom; `#controls` is sticky at the top when
+it is *not* your turn).
+
+---
+
+## 12. Gotchas (learned the hard way)
 
 - **`hx-target` inheritance:** do not put `hx-target="#toasts"` on `#app` —
   the SSE `sse-swap` children inherit it and every fragment lands in the toast

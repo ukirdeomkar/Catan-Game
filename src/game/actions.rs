@@ -461,7 +461,10 @@ impl GameState {
             return Err(RuleError::new("The robber is already there"));
         }
         self.robber_hex = hex;
-        let terrain = self.board.hexes[hex].terrain.name();
+        let terrain = match self.board.hexes[hex].terrain.resource() {
+            Some(r) => r.name(),
+            None => "Desert",
+        };
         let number = self.board.hexes[hex].number;
         let name = self.players[actor].name.clone();
         let at = match number {

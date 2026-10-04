@@ -1,6 +1,7 @@
 use crate::game::board::{Board, Building, PortKind, Terrain};
 use crate::game::resources::{
     ALL_RESOURCES, Bundle, COST_CITY, COST_DEV, COST_ROAD, COST_SETTLEMENT, DevCard, Resource,
+    ResourceHand,
 };
 use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerId};
 use crate::state::{RoomData, ViewMode};
@@ -44,8 +45,9 @@ fn terrain_glyph(t: Terrain) -> &'static str {
 const CSS: &str = r#"
 *{box-sizing:border-box}
 html{height:100%}
-body{margin:0;min-height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#e9eef2;-webkit-text-size-adjust:100%;background-color:#0e1319;background-image:linear-gradient(rgba(9,12,17,.80),rgba(9,12,17,.93)),url("/static/branding/landscape.webp");background-size:cover;background-position:center top;background-repeat:no-repeat;background-attachment:fixed}
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#e9eef2;-webkit-text-size-adjust:100%;background-color:#0e1319;background-image:linear-gradient(rgba(9,12,17,.80),rgba(9,12,17,.93)),url("/static/branding/landscape.webp");background-size:cover;background-position:center top;background-repeat:no-repeat;background-attachment:fixed}
 @media(max-width:760px){body{background-image:linear-gradient(rgba(9,12,17,.84),rgba(9,12,17,.94)),url("/static/branding/potrait.webp")}}
+body>.wrap{flex:1 0 auto}
 a{color:#6cc0ff}
 h1,h2,h3{margin:.2em 0}
 .wrap{max-width:1180px;margin:0 auto;padding:14px}
@@ -137,9 +139,43 @@ header.site .wrap{display:flex;align-items:center;gap:10px;padding-top:12px;padd
 .brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:inherit}
 .brand img{height:42px;width:42px;border-radius:11px;border:1px solid #ffffff26;box-shadow:0 3px 12px #000a;display:block}
 .brand .bt{font-weight:800;font-size:19px;letter-spacing:.4px;background:linear-gradient(#ffeaa7,#dfa032);-webkit-background-clip:text;background-clip:text;color:transparent}
-.hero{border-radius:14px;overflow:hidden;border:1px solid #ffffff1f;box-shadow:0 12px 40px #000b;margin-bottom:14px;background:#12181f}
-.hero img{display:block;width:100%;height:auto}
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+#turn{position:relative;z-index:50}
+.tg{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(6,9,13,.74);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.tg-card{position:relative;background:rgba(20,27,34,.99);border:1px solid #35424e;border-radius:16px;padding:18px;width:100%;max-width:460px;box-shadow:0 18px 60px #000c;text-align:center}
+.tg-card h2{margin:0 0 4px}
+.tg-dice{font-size:30px;margin:8px 0}
+.tg-big{font-size:22px;padding:16px 22px;min-height:60px;width:100%}
+.tg-menu,.tg-sub{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.tg-menu .btn,.tg-sub .btn{min-height:48px;font-size:16px}
+.tg-sub[hidden]{display:none}
+.tg-dismiss{position:absolute;top:10px;right:12px;background:#37424e;border:0;color:#e9eef2;border-radius:8px;width:34px;height:34px;font-size:15px;cursor:pointer}
+.tg-bar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(12,17,23,.97);border-top:1px solid #35424e;box-shadow:0 -6px 24px #000a}
+#notif{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:70;display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;width:calc(100% - 24px);max-width:460px}
+#notif .note{background:rgba(20,27,34,.98);border:1px solid #4a5a6a;border-left:4px solid #f0c040;border-radius:10px;padding:8px 14px;font-size:14px;color:#e9eef2;box-shadow:0 8px 24px #000a;animation:notifin .18s ease-out}
+@keyframes notifin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.pick.disabled{opacity:.28;pointer-events:none}
+.dice-wrap{position:relative;display:inline-flex;align-items:center;gap:5px}
+.dice-anim{position:relative;width:30px;height:30px;display:none}
+.dice-wrap.rolling .dice-anim{display:inline-block}
+.dice-wrap.rolling .dice-real{visibility:hidden}
+.dice-anim svg{position:absolute;inset:0;opacity:0;animation:droll .72s linear infinite}
+.dice-anim svg:nth-child(1){animation-delay:0s}
+.dice-anim svg:nth-child(2){animation-delay:.12s}
+.dice-anim svg:nth-child(3){animation-delay:.24s}
+.dice-anim svg:nth-child(4){animation-delay:.36s}
+.dice-anim svg:nth-child(5){animation-delay:.48s}
+.dice-anim svg:nth-child(6){animation-delay:.6s}
+@keyframes droll{0%,15.9%{opacity:1}16%,100%{opacity:0}}
+.tg-bar .tg-menu,.tg-bar .tg-sub{flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:center;gap:8px;margin-top:0}
+.tg-res{display:inline-flex;gap:7px;align-items:center;font-size:14px}
+.tg-res .r{display:inline-flex;gap:1px;align-items:center;opacity:.4}
+.tg-res .r.on{opacity:1}
+.tg-res .r b{font-weight:800}
+footer.site{margin-top:auto;padding-top:10px;padding-bottom:22px}
+footer.site .wrap{display:flex;justify-content:center}
+footer.site .fnote{font-size:13px;color:#c7d2db;background:rgba(15,20,26,.62);border:1px solid #ffffff14;border-radius:999px;padding:6px 14px}
+footer.site a{color:#ffeaa7;font-weight:700;text-decoration:none}
+footer.site a:hover{text-decoration:underline}
 "#;
 
 fn shell(title: &str, body: Markup) -> Markup {
@@ -150,7 +186,7 @@ fn shell(title: &str, body: Markup) -> Markup {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 meta name="theme-color" content="#8c1c13";
-                meta name="description" content="Play Catanou — a tiny self-hosted multiplayer Settlers of Catan.";
+                meta name="description" content="The classic game of Catan, now online to play with your friends.";
                 meta property="og:title" content="Play Catanou";
                 meta property="og:description" content="Create a room, share the code, and play Settlers of Catan with friends.";
                 meta property="og:image" content="/static/branding/og.jpg";
@@ -166,6 +202,7 @@ fn shell(title: &str, body: Markup) -> Markup {
                 script src="/static/sse.js" defer {}
                 script src="/static/timer.js" defer {}
                 script src="/static/trade.js" defer {}
+                script src="/static/guide.js" defer {}
             }
             body {
                 header.site {
@@ -177,6 +214,14 @@ fn shell(title: &str, body: Markup) -> Markup {
                     }
                 }
                 (body)
+                footer.site {
+                    div.wrap {
+                        span.fnote {
+                            "Made with ♥ by "
+                            a href="https://github.com/ukirdeomkar" target="_blank" rel="noopener" { "Omkar" }
+                        }
+                    }
+                }
             }
         }
     }
@@ -189,14 +234,8 @@ fn shell(title: &str, body: Markup) -> Markup {
 pub fn home_page(error: Option<&str>) -> Markup {
     shell("Play Catanou", html! {
         div.wrap {
-            div.hero {
-                picture {
-                    source media="(max-width:760px)" srcset="/static/branding/potrait.webp";
-                    img src="/static/branding/landscape.webp" alt="Play Catanou — based on the classic game of Catan";
-                }
-            }
-            h1.sr-only { "Play Catanou" }
-            p.muted { "A tiny self-hosted Catan. Create a room and share the code, or join with a code." }
+            h1 { "Settlers of Catan" }
+            p.muted { "The classic game of Catan, now online to play with your friends. Create a room and share the code, or join with a code." }
             @if let Some(e) = error { div.card #toasts { (e) } }
             div.card {
                 h3 { "Create a new game" }
@@ -330,6 +369,7 @@ pub struct Fragments {
     pub controls: Markup,
     pub trades: Markup,
     pub log: Markup,
+    pub turn: Markup,
 }
 
 pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Fragments {
@@ -341,6 +381,7 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
         controls: controls_frag(game, data, viewer),
         trades: trades_frag(game, &data.code, viewer),
         log: log_frag(game),
+        turn: turn_frag(game, data, viewer),
     }
 }
 
@@ -357,8 +398,10 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
                 sse-connect=(format!("/room/{code}/events"))
                 hx-swap="innerHTML" hx-indicator="#busy" {
                 div #toasts {}
+                div #notif {}
                 div.card #players.section sse-swap="players" { (f.players) }
                 div #status.section sse-swap="status" { (f.status) }
+                div #turn sse-swap="turn" { (f.turn) }
                 div.game {
                     div {
                         div.card #controls sse-swap="controls" { (f.controls) }
@@ -386,6 +429,9 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
 
 fn status_frag(game: &GameState, data: &RoomData) -> Markup {
     let cur = &game.players[game.current];
+    let cur_is_bot = data.members.get(game.current).map(|m| m.is_bot).unwrap_or(false);
+    let bot_rolling =
+        cur_is_bot && matches!(game.phase, Phase::Play) && game.dice.is_none();
     html! {
         div.card {
             div.turnbar {
@@ -406,9 +452,13 @@ fn status_frag(game: &GameState, data: &RoomData) -> Markup {
                         span.turn-timer data-deadline=(data.turn_deadline_ms) { "⏱ " span data-secs { "" } }
                     }
                     @if let Some((a,b)) = game.dice {
-                        span.dice title=(format!("{a} + {b}")) {
-                            (dice_face(a)) (dice_face(b))
-                            span.dice-total { "= " (a+b) }
+                        span.dice-wrap title=(format!("{a} + {b}")) {
+                            (dice_anim())
+                            span.dice-real { (dice_face(a)) (dice_face(b)) span.dice-total { "= " (a+b) } }
+                        }
+                    } @else if bot_rolling {
+                        span.dice-wrap.rolling title="Rolling…" {
+                            (dice_anim())
                         }
                     }
                     @if (game.phase == Phase::Play || matches!(game.phase, Phase::MoveRobber{..}))
@@ -594,12 +644,24 @@ fn robber_placed(board: &Board, game: &GameState) -> bool {
         .unwrap_or(true)
 }
 
-/// Human-readable robber location, e.g. `8 - Forest` (desert has no number).
+/// Terrain → the resource it produces, for player-facing labels.
+fn terrain_resource(t: Terrain) -> &'static str {
+    match t {
+        Terrain::Wood => "Wood",
+        Terrain::Brick => "Brick",
+        Terrain::Wheat => "Wheat",
+        Terrain::Ore => "Ore",
+        Terrain::Sheep => "Sheep",
+        Terrain::Desert => "Desert",
+    }
+}
+
+/// Human-readable robber location, e.g. `8 - Wood` (desert has no number).
 fn robber_label(game: &GameState) -> String {
     let hex = &game.board.hexes[game.robber_hex];
     match hex.number {
-        Some(n) => format!("{n} - {}", hex.terrain.name()),
-        None => hex.terrain.name().to_string(),
+        Some(n) => format!("{n} - {}", terrain_resource(hex.terrain)),
+        None => terrain_resource(hex.terrain).to_string(),
     }
 }
 
@@ -770,6 +832,83 @@ fn hand_frag(game: &GameState, code: &str, v: PlayerId) -> Markup {
     }
 }
 
+fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
+    let Some(v) = viewer else {
+        return Markup::default();
+    };
+    if game.current != v || !matches!(game.phase, Phase::Play) {
+        return Markup::default();
+    }
+    let url = format!("/room/{}/action", data.code);
+    let mode_url = format!("/room/{}/mode", data.code);
+    let mode = data.members.get(v).map(|m| m.mode).unwrap_or_default();
+    let p = &game.players[v];
+
+    if game.dice.is_none() {
+        return html! {
+            div.tg data-step="roll" {
+                div.tg-card {
+                    button.tg-dismiss type="button" data-tg-dismiss title="Hide guide" { "✕" }
+                    h2 { "Your turn" }
+                    p.muted { "Roll the dice to begin." }
+                    button.btn.tg-big hx-post=(url) hx-vals="{\"action\":\"roll\"}" { "🎲 Roll dice" }
+                }
+            }
+        };
+    }
+
+    if mode != ViewMode::Normal {
+        let (label, spot) = match mode {
+            ViewMode::PlaceRoad => ("road", "edge"),
+            ViewMode::PlaceSettlement => ("settlement", "intersection"),
+            ViewMode::PlaceCity => ("city", "intersection"),
+            ViewMode::Normal => ("", ""),
+        };
+        return html! {
+            div.tg-bar data-step="build" {
+                span.tg-res { (hand_strip(&p.resources)) }
+                span { "Build a " b { (label) } " — tap a highlighted " b { (spot) } " on the board." }
+                button.btn.icon.sec hx-post=(mode_url) hx-vals="{\"mode\":\"normal\"}" title="Done building" { "✔" }
+                button.btn.icon.warn hx-post=(mode_url) hx-vals="{\"mode\":\"normal\"}" title="Cancel" { "✖" }
+            }
+        };
+    }
+
+    let can_trade = p.resources.total() > 0 && game.trade.is_none();
+    let has_dev = !game.played_dev_this_turn && !p.dev_cards.is_empty();
+    let road_dis = !COST_ROAD.can_pay(&p.resources) || p.roads_left == 0;
+    let set_dis = !COST_SETTLEMENT.can_pay(&p.resources) || p.settlements_left == 0;
+    let city_dis = !COST_CITY.can_pay(&p.resources) || p.cities_left == 0;
+
+    html! {
+        div.tg-bar data-step="menu" {
+            span.tg-res { (hand_strip(&p.resources)) }
+            div.tg-menu {
+                button.btn.icon type="button" data-tg-menu="build" title="Build" { "🛠" }
+                @if can_trade {
+                    button.btn.icon.sec type="button" data-open-trade title="Trade" { "⇄" }
+                }
+                @if has_dev {
+                    button.btn.icon.sec type="button" data-tg-menu="dev" title="Play development card" { "🃏" }
+                }
+                button.btn.icon.sec hx-post=(url) hx-vals="{\"action\":\"end_turn\"}" title="End turn" { "▶" }
+            }
+            div.tg-sub data-sub="build" hidden {
+                button.btn.icon.sec hx-post=(mode_url) hx-vals="{\"mode\":\"road\"}" disabled[road_dis] title="Build road" { "🛣" }
+                button.btn.icon.sec hx-post=(mode_url) hx-vals="{\"mode\":\"settlement\"}" disabled[set_dis] title="Build settlement" { "🏠" }
+                button.btn.icon.sec hx-post=(mode_url) hx-vals="{\"mode\":\"city\"}" disabled[city_dis] title="Build city" { "🏙" }
+                button.btn.icon.sec type="button" data-tg-back title="Back" { "←" }
+            }
+            @if has_dev {
+                div.tg-sub data-sub="dev" hidden {
+                    (dev_play_controls(game, data, v, true))
+                    button.btn.icon.sec type="button" data-tg-back title="Back" { "←" }
+                }
+            }
+        }
+    }
+}
+
 fn controls_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
     let Some(v) = viewer else {
         return html! { p.muted { "Spectating." } };
@@ -904,10 +1043,13 @@ fn discard_form(game: &GameState, code: &str, v: PlayerId) -> Markup {
     }
 }
 
-fn pick_cards(group: &str) -> Markup {
+fn pick_cards(group: &str, max: Option<&ResourceHand>) -> Markup {
     html! {
         @for r in ALL_RESOURCES {
-            button.rcard.pick type="button" data-res=(r.slug()) data-group=(group) title=(r.name()) {
+            @let cap = max.map(|h| h.get(r));
+            @let none_left = cap == Some(0);
+            button.rcard.pick.disabled[none_left] type="button" data-res=(r.slug()) data-group=(group)
+                data-max=[cap] title=(r.name()) {
                 span.pick-count data-count="0" { "0" }
                 span.rcard-icon { (resource_glyph(r)) }
                 span.rcard-name { (r.name()) }
@@ -916,8 +1058,9 @@ fn pick_cards(group: &str) -> Markup {
     }
 }
 
-fn trade_modal(_game: &GameState, data: &RoomData, _v: PlayerId) -> Markup {
+fn trade_modal(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
     let url = format!("/room/{}/action", data.code);
+    let p = &game.players[v];
     html! {
         div #trade-modal.modal hidden {
             div.modal-card {
@@ -927,9 +1070,9 @@ fn trade_modal(_game: &GameState, data: &RoomData, _v: PlayerId) -> Markup {
                 }
                 p.muted.small { "Tap cards to build your offer. Shared with everyone — first to accept trades. Ends in 30s or when all decline." }
                 strong { "You give" }
-                div.picker { (pick_cards("give")) }
+                div.picker { (pick_cards("give", Some(&p.resources))) }
                 strong { "You want" }
-                div.picker { (pick_cards("want")) }
+                div.picker { (pick_cards("want", None)) }
                 div.trade-preview {
                     span #preview-give { "—" }
                     span.arrow { "⇄" }
@@ -1037,6 +1180,26 @@ fn dice_face(n: u8) -> Markup {
                 5 => { (pip(6, 6)) (pip(14, 6)) (pip(10, 10)) (pip(6, 14)) (pip(14, 14)) }
                 _ => { (pip(6, 5)) (pip(6, 10)) (pip(6, 15)) (pip(14, 5)) (pip(14, 10)) (pip(14, 15)) }
             }
+        }
+    }
+}
+
+/// Six overlaid die faces cycled by CSS to look like a tumbling die.
+fn dice_anim() -> Markup {
+    html! {
+        span.dice-anim aria-hidden="true" {
+            @for n in 1..=6u8 { (dice_face(n)) }
+        }
+    }
+}
+
+/// Compact "your resources" row for the guided bar, so a player can always see
+/// what they hold while choosing an action.
+fn hand_strip(res: &ResourceHand) -> Markup {
+    html! {
+        @for r in ALL_RESOURCES {
+            @let n = res.get(r);
+            span.r.on[n > 0] title=(r.name()) { (resource_glyph(r)) b { (n) } }
         }
     }
 }

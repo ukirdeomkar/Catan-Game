@@ -9,17 +9,18 @@ picking the project up. The user-facing/deployment guide is in `README.md`.
 
 | Item | State |
 |------|-------|
-| Rules engine (base game, complete) | ✅ done, 18 unit tests passing |
+| Rules engine (base game, complete) | ✅ done, 22 unit tests passing (18 engine + 4 bot) |
 | Random board generation each game | ✅ done |
 | Multiplayer rooms (2–4 players) | ✅ done (cookie sessions + SSE) |
-| Web UI (server-rendered HTML + SVG board) | ✅ done, **browser interaction not yet eyeballed** |
+| Web UI (server-rendered HTML + SVG board + guided turn bar) | ✅ done, browser-tested (desktop + mobile) |
 | Docker + systemd + docs | ✅ done |
-| **AI bots** | ❌ not implemented (scaffolding only — see §9) |
+| **AI bots** | ✅ done — three difficulty tiers, paced turns (see §9) |
 | Expansions (Seafarers / Cities & Knights) | ❌ not started (architected to allow) |
 | Release binary size | ~1.1 MB (Windows); similar on Linux musl |
 
-Verified end-to-end via HTTP/curl: create → join → start → setup placement → roll → turn
-enforcement → SSE fragments → disk snapshot. **Not yet verified in an actual browser.**
+Verified end-to-end via HTTP/curl and in a real browser (Chrome DevTools MCP): create →
+join → add bot → start → setup placement → roll → build/trade/dev → robber → turn
+enforcement → SSE fragments → disk snapshot. Desktop and mobile viewports both pass.
 
 ---
 
@@ -27,7 +28,7 @@ enforcement → SSE fragments → disk snapshot. **Not yet verified in an actual
 
 ```bash
 cargo run                 # http://localhost:8080
-cargo test                # 18 engine tests
+cargo test                # 22 tests (18 engine + 4 bot)
 cargo build --release      # optimized, ~1.1 MB binary
 ```
 
@@ -49,19 +50,20 @@ Deploy: `docker compose up -d --build`, or the systemd unit in `deploy/catan.ser
 
 ```
 src/
-  main.rs        Axum bootstrap, router mount, background sweeper task
+  main.rs        Axum bootstrap, router mount, background sweeper/timer/bot tasks
   handlers.rs    HTTP routes, cookie sessions, SSE stream, action parsing/dispatch
-  render.rs      ALL HTML (maud) + inline SVG board + per-viewer fragments
-  state.rs       AppState, Room, Member, room codes, join/start, disk persistence
+  render.rs      ALL HTML (maud) + inline SVG board + per-viewer fragments + turn bar
+  state.rs       AppState, Room, Member, room codes, join/start, disk persistence, bot driver
+  bot.rs         AI bot policy — choose_action() returns one legal Action per call
   game/          pure synchronous rules engine (no async, no IO)
     mod.rs       module list
     board.rs     hex/vertex/edge geometry, random generation, ports
-    state.rs     GameState, Player, Phase, TradeOffer, RNG field
+    state.rs     GameState, Player, Phase, TradeOffer, BotLevel, RNG field
     actions.rs   Action enum, apply(), all validation, legal-move enumeration
     resources.rs Resource, ResourceHand, Bundle, costs, DevCard, deck
     scoring.rs   Longest Road, Largest Army, victory points, win check
     rng.rs       Rng64 (serializable splitmix64) — enables exact snapshot resume
-static/          htmx.min.js + sse.js (vendored, no CDN dependency)
+static/          htmx.min.js + sse.js (vendored) + guide.js, trade.js, timer.js, lobby.js
 Cargo.toml       deps + [profile.release] size tuning
 Dockerfile, docker-compose.yml, deploy/catan.service, README.md
 ```
@@ -79,12 +81,13 @@ browser ──htmx POST──▶ /room/{code}/action ──▶ GameState::apply(
 - **Actions** are form/`hx-vals` POSTs to a single `action` endpoint. `parse_action`
   (handlers.rs) maps form fields → a typed `game::Action`, then `GameState::apply`
   validates and mutates. Errors come back as a small HTML body swapped into `#toasts`;
-  success returns an empty 200 (clears the toast).
+  success returns an empty 200 (clears the toast). Bots reach the same `apply` path via
+  `state::tick_bots` → `bot::choose_action`, so bot and human actions are validated identically.
 - **Live updates**: each room has a `tokio::sync::watch<u64>` version counter. Any change
   calls `Room::bump()`. Each connected viewer has its own SSE stream that, on every version
   change, **re-renders its own personalised fragments** (board, panels, controls, hand, log,
-  trades, status) and emits them as named SSE events. htmx's SSE extension swaps each event
-  into the element with the matching `sse-swap="eventname"`.
+  trades, status, turn) and emits them as named SSE events. htmx's SSE extension swaps each
+  event into the element with the matching `sse-swap="eventname"`.
 - Because rendering is per-viewer, private info (your hand, your legal moves/controls) is
   never leaked to opponents. Never render the whole `GameState`; always go through
   `render::fragments(game, data, viewer)`.
@@ -135,6 +138,9 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 - Snapshots: `{CATAN_DATA_DIR}/{CODE}.json`, written atomically after each successful action.
   Loaded on startup. A background task (`main.rs`) deletes rooms idle > 24 h. Bots live in
   memory only.
+- Bot pacing lives on `RoomData` as `bot_next_ms` / `bot_key` (both `#[serde(skip)]`): the key
+  identifies the current decision context (player + turn + phase + setup step), and a change
+  re-arms the "first action" delay so each bot turn is watchable rather than instant.
 
 ---
 
@@ -144,7 +150,9 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 |----------|------|
 | Add/change a game rule or action | `game/actions.rs` (+ a test in `game/tests.rs`) |
 | Change board shape/distribution/ports | `game/board.rs` |
-| Change look/layout/interaction | `render.rs` |
+| Change look/layout/interaction (incl. the turn bar) | `render.rs` + `static/guide.js` |
+| Change bot strategy/difficulty | `src/bot.rs` (+ a test in `bot.rs`) |
+| Change bot pacing / turn timer | `state.rs` (`tick_bots`, `tick_turn_timers`) |
 | Add an endpoint or change form parsing | `handlers.rs` |
 | Change rooms/sessions/persistence | `state.rs` |
 | Change deployment | `Dockerfile`, `docker-compose.yml`, `deploy/` |
@@ -153,9 +161,10 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 
 ## 8. Known gaps & gotchas
 
-1. **Not browser-tested.** htmx attributes are placed directly on SVG elements
-   (`circle`/`line`/`polygon`) and rely on `hx-target="#toasts"` being inherited from `#app`.
-   This should work but please confirm clicking to place actually fires in a real browser.
+1. **SVG interaction needs dispatched events.** htmx attributes are placed directly on SVG
+   elements (`circle`/`line`/`polygon`); `SVGElement` has no `.click()`, so harnesses must
+   dispatch a bubbling `MouseEvent` (see `docs/BROWSER-TESTING.md`). Action feedback is
+   retargeted server-side with `HX-Retarget: #toasts`, not an inherited target.
 2. **Terrain uses emoji glyphs** (🌲🧱🌾⛰🐑🏜) as tile art — rendering differs by OS font.
    Replace with SVG shapes if you want consistency.
 3. **`connected` flag is approximate** — set on page load/SSE connect, not cleared in real
@@ -163,9 +172,10 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 4. **Single port per vertex.** Ports are stored as one `Option<PortKind>` per vertex; if two
    port edges ever shared a vertex the last write would win. With the current even spacing
    this never happens, but a custom port layout should store a list.
-5. **Number/terrain are fully random** (no classic balanced spiral). Deliberate per the
-   requirement "board changes each time". A "balanced board" option would be a small add in
-   `board.rs`.
+5. **Number tokens use the official balanced "spiral" placement** (`board.rs::spiral_order`):
+   the fixed token sequence is dealt outer-ring-inward, counter-clockwise from a randomly
+   chosen corner, skipping the desert. Terrain, ports, and the starting corner are still
+   randomized, so boards differ each game while the number layout stays fair.
 6. **Spectators**: a visitor with no cookie to an already-started game gets an error page,
    not a read-only view. Easy to relax if desired.
 7. **2-player game** uses standard rules with 2 players (no official 2-player variant / no
@@ -185,36 +195,40 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 
 ---
 
-## 9. Next task: AI bots (design is already half-done)
+## 9. AI bots
 
-Scaffolding that already exists:
-- `Player::is_bot` and `PlayerConfig::is_bot`.
-- Lobby "Add bot" button → `state.rs::RoomData::add_bot()` (creates a bot `Member`).
-- The engine accepts `apply(actor, &Action)` from **any** source, so a bot is just an
-  `Action` producer.
+Implemented in `src/bot.rs` (policy) + `state.rs::tick_bots` (driver).
 
-Suggested implementation:
-1. New module `src/bot.rs` with `pub fn choose_action(game: &GameState, pid: PlayerId) -> Action`.
-2. A driver task per room (or a hook after `bump()`): when `game.current` is a bot and the
-   phase needs input, compute an action, `apply` it, `bump`, repeat (with a small delay so
-   humans can watch). Handle non-`Play` phases too (`Setup`, `Discard`, `MoveRobber`,
-   `Steal`) — a bot must act in all of them.
-3. Heuristics can start simple (greedy: build settlements on high-pip, best-ratio spots; roll;
-   end turn) and improve later. Determinism: drive it from the game's `Rng64` or a separate
-   seeded RNG so games are reproducible.
-4. Add tests that run a full all-bot game to completion (asserts a winner, no panics,
-   invariants hold).
-
-This is the single most valuable next feature for 1-player / 2-player games.
+- `bot::choose_action(game, pid, level) -> Action` is **pure and deterministic** — it only
+  reads `GameState` and returns one action, no randomness, so bot games are reproducible and
+  ties break deterministically on index-ordered legal-move lists.
+- It handles **every** phase, not just `Play`: setup placement, rolls, building, buying/playing
+  dev cards, discard-on-7, robber placement, steal choice, and responding to shared trade offers.
+- Three tiers share one scoring core; the tier decides how much the bot considers:
+  - **Easy** — naive greed: expand first, cities last; no trading, no Year of Plenty/Road Building.
+  - **Medium** — sound priority order (settlement → city → dev → road); uses ports, dev cards, trades.
+  - **Hard** — scores every option by expected value and adds a Longest-Road lookahead.
+- `bot::fallback_action` guarantees a legal action if the policy ever returns one the engine
+  rejects, so a bug can't wedge a room.
+- **Driver/pacing** (`state::tick_bots`, called every 700 ms from `main.rs`): one bot action per
+  tick, gated by `RoomData::bot_next_ms`. A new decision context (via `bot_context_key`) applies
+  a `BOT_FIRST_DELAY_MS` (4.5 s) pause, then `BOT_STEP_DELAY_MS` (2.5 s) between steps, so bot
+  turns take roughly 10–20 s and are watchable rather than instant.
+- The host adds bots in the lobby (Easy/Medium/Hard); `RoomData::add_bot` creates the `Member`.
+- Tests in `bot.rs`: every tier plays full all-bot games to a winner across several seeds, plus
+  setup/play move generation and exact-half discard.
 
 ---
 
 ## 10. Testing
 
-- `cargo test` — 18 engine tests in `src/game/tests.rs`. They cover board geometry &
-  distribution, setup snake order, production (settlement=1/city=2), robber blocking,
-  building costs/connection/distance rules, dev cards (Monopoly, one-per-turn, fresh-card
-  rule), Longest Road (ring + break + ≥5 threshold), bank & player trades, and the 10-VP win.
+- `cargo test` — 22 tests total.
+  - 18 engine tests in `src/game/tests.rs`: board geometry & distribution, setup snake order,
+    production (settlement=1/city=2), robber blocking, building costs/connection/distance rules,
+    dev cards (Monopoly, one-per-turn, fresh-card rule), Longest Road (ring + break + ≥5
+    threshold), bank & player trades, and the 10-VP win.
+  - 4 bot tests in `src/bot.rs`: full all-bot games finish with a winner for every difficulty
+    across several seeds, setup/play produce legal moves, and discard returns exactly half.
 - `game::tests::auto_setup` is a reusable helper that plays the whole setup phase.
 - Add a test whenever you add a rule. The engine is pure, so tests are fast and deterministic
   (seeded via `Rng64::new(seed)`).
@@ -253,5 +267,5 @@ curl -b /tmp/a.txt -N http://localhost:8080/room/$CODE/events   # watch SSE
 - [x] Online multiplayer for players who live apart — ✅ rooms + join codes + SSE
 - [x] 2–4 players — ✅
 - [x] Deployable via git / Docker — ✅ Dockerfile + compose + systemd unit
-- [ ] Bots for single-player — ⬜ next (§9)
-- [ ] Real-browser acceptance pass — ⬜ do this with `docs/BROWSER-TESTING.md` before shipping publicly
+- [x] Bots for single-player — ✅ three difficulty tiers (§9)
+- [x] Real-browser acceptance pass — ✅ desktop + mobile via `docs/BROWSER-TESTING.md`

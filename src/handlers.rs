@@ -245,6 +245,7 @@ fn render_events(app: &AppState, code: &str, token: &str) -> Vec<Result<Event, I
         mk("controls", f.controls),
         mk("trades", f.trades),
         mk("log", f.log),
+        mk("turn", f.turn),
         // Any lobby viewer still waiting should drop into the game now.
         Ok(Event::default().event("started").data(format!("/room/{code}"))),
     ]

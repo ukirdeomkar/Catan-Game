@@ -39,7 +39,28 @@
     ["give", "want"].forEach(function (g) { RES.forEach(function (r) { state[g][r] = 0; }); });
     sync();
   }
-  function openModal() { var m = document.getElementById("trade-modal"); if (m) m.hidden = false; }
+  function refreshGiveCaps() {
+    var counts = {};
+    document.querySelectorAll("#hand .rcard").forEach(function (c) {
+      var g = c.querySelector(".rcard-icon");
+      var n = c.querySelector(".rcard-count");
+      if (g && n) counts[g.textContent] = parseInt(n.textContent, 10) || 0;
+    });
+    document.querySelectorAll('.pick[data-group="give"]').forEach(function (btn) {
+      var g = btn.querySelector(".rcard-icon");
+      var have = g && counts[g.textContent] !== undefined ? counts[g.textContent] : 0;
+      btn.setAttribute("data-max", String(have));
+      btn.classList.toggle("disabled", have <= 0);
+      var r = btn.getAttribute("data-res");
+      if (state.give[r] > have) state.give[r] = have;
+    });
+  }
+  function openModal() {
+    refreshGiveCaps();
+    sync();
+    var m = document.getElementById("trade-modal");
+    if (m) m.hidden = false;
+  }
   function closeModal() { var m = document.getElementById("trade-modal"); if (m) m.hidden = true; }
 
   document.addEventListener("click", function (e) {
@@ -51,7 +72,10 @@
       var group = t.getAttribute("data-group");
       var r = t.getAttribute("data-res");
       var n = state[group][r] || 0;
-      state[group][r] = n >= 5 ? 0 : n + 1;
+      var capAttr = t.getAttribute("data-max");
+      var cap = capAttr === null ? 5 : (parseInt(capAttr, 10) || 0);
+      if (cap <= 0) { e.preventDefault(); return; }
+      state[group][r] = n >= cap ? 0 : n + 1;
       sync();
       e.preventDefault();
       return;
@@ -70,7 +94,7 @@
   document.addEventListener("htmx:afterRequest", function (e) {
     if (e.target && e.target.id === "trade-form") { clearSel(); closeModal(); }
   });
-  document.addEventListener("htmx:afterSwap", sync);
-  document.addEventListener("htmx:sseMessage", sync);
+  document.addEventListener("htmx:afterSwap", function () { refreshGiveCaps(); sync(); });
+  document.addEventListener("htmx:sseMessage", function () { refreshGiveCaps(); sync(); });
   sync();
 })();

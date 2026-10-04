@@ -246,29 +246,37 @@ impl Board {
         ];
         terrains.shuffle(rng);
 
-        // --- Number tokens: two each of 3..11 (no 7), one each of 2 and 12 ---
-        let mut numbers: Vec<u8> = vec![
-            2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12,
+        // --- Number tokens: official "alphabetical spiral" placement. ---
+        // The 18 tokens carry the fixed numerals below in letter order
+        // (A..R). They are laid out along a spiral that starts at one of the
+        // six corner hexes and winds counter-clockwise toward the centre,
+        // skipping the desert. The corner is chosen at random so that boards
+        // with the same terrain still differ.
+        const TOKEN_SPIRAL: [u8; 18] = [
+            5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11,
         ];
-        numbers.shuffle(rng);
+        use rand::RngExt;
+        let start_deg = 60.0 * rng.random_range(0..6) as f64;
+        let order = spiral_order(&coords, start_deg);
+
+        let mut numbers_by_hex: Vec<Option<u8>> = vec![None; coords.len()];
+        let mut token = 0usize;
+        for &i in &order {
+            if terrains[i] == Terrain::Desert {
+                continue;
+            }
+            numbers_by_hex[i] = Some(TOKEN_SPIRAL[token]);
+            token += 1;
+        }
 
         let mut hexes = Vec::with_capacity(coords.len());
-        let mut nidx = 0;
         for (i, &(q, r)) in coords.iter().enumerate() {
-            let terrain = terrains[i];
-            let number = if terrain == Terrain::Desert {
-                None
-            } else {
-                let n = numbers[nidx];
-                nidx += 1;
-                Some(n)
-            };
             let (cx, cy) = centers[i];
             hexes.push(Hex {
                 q,
                 r,
-                terrain,
-                number,
+                terrain: terrains[i],
+                number: numbers_by_hex[i],
                 vertices: hex_vertex_ids[i],
                 cx,
                 cy,
@@ -342,6 +350,31 @@ impl Board {
             .position(|h| h.terrain == Terrain::Desert)
             .unwrap_or(0)
     }
+}
+
+/// Hex (cube) distance from the board centre.
+fn hex_distance(q: i32, r: i32) -> i32 {
+    (q.abs() + r.abs() + (q + r).abs()) / 2
+}
+
+/// Visit every hex index in the official number-token spiral order: the
+/// outer ring first, then each ring inward, winding counter-clockwise from
+/// the corner at `start_deg`. The desert is not handled here — the caller
+/// skips it while dealing tokens.
+fn spiral_order(coords: &[(i32, i32)], start_deg: f64) -> Vec<usize> {
+    let ring = |i: usize| hex_distance(coords[i].0, coords[i].1);
+    let ccw_from_start = |i: usize| {
+        let (x, y) = axial_to_pixel(coords[i].0, coords[i].1);
+        let ang = y.atan2(x).to_degrees();
+        (start_deg - ang).rem_euclid(360.0)
+    };
+    let mut idx: Vec<usize> = (0..coords.len()).collect();
+    idx.sort_by(|&a, &b| {
+        ring(b)
+            .cmp(&ring(a))
+            .then_with(|| ccw_from_start(a).partial_cmp(&ccw_from_start(b)).unwrap())
+    });
+    idx
 }
 
 fn hex_coordinates() -> Vec<(i32, i32)> {
