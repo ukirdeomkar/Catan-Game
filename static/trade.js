@@ -70,6 +70,7 @@
     if (t.hasAttribute("data-close-trade")) { closeModal(); e.preventDefault(); return; }
     if (t.classList.contains("pick")) {
       var group = t.getAttribute("data-group");
+      if (group !== "give" && group !== "want") { e.preventDefault(); return; }
       var r = t.getAttribute("data-res");
       var n = state[group][r] || 0;
       var capAttr = t.getAttribute("data-max");

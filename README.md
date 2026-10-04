@@ -144,6 +144,15 @@ location / {
 
 Everything is server-authoritative, so there is no way to cheat from the client.
 
+### Install it as an app (PWA)
+
+The site is an installable Progressive Web App. Open it over HTTPS and install from the
+browser — an in-app **Install** button appears when the browser says it's installable:
+
+- **Android (Chrome):** menu ⋮ → **Install app** (or the in-app **Install** button).
+- **iPhone/iPad (Safari):** **Share** → **Add to Home Screen**.
+- **Desktop (Chrome/Edge):** install icon in the address bar, or menu → **Install**.
+
 ---
 
 ## Architecture

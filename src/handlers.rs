@@ -30,8 +30,19 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/start", post(start))
         .route("/room/{code}/add_bot", post(add_bot))
         .route("/healthz", get(|| async { "ok" }))
+        // Served from the root so the worker's scope covers the whole origin.
+        .route("/sw.js", get(service_worker))
         .nest_service("/static", tower_http::services::ServeDir::new("static"))
         .with_state(app)
+}
+
+/// The service worker, embedded and served from the origin root so its scope
+/// covers every page (enables PWA installability).
+async fn service_worker() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("../static/sw.js"),
+    )
 }
 
 // ---------------------------------------------------------------------------

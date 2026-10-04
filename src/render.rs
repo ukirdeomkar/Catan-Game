@@ -176,6 +176,12 @@ footer.site .wrap{display:flex;justify-content:center}
 footer.site .fnote{font-size:13px;color:#c7d2db;background:rgba(15,20,26,.62);border:1px solid #ffffff14;border-radius:999px;padding:6px 14px}
 footer.site a{color:#ffeaa7;font-weight:700;text-decoration:none}
 footer.site a:hover{text-decoration:underline}
+#install-bar{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:65;display:none;align-items:center;gap:10px;background:rgba(20,27,34,.98);border:1px solid #4a5a6a;border-left:4px solid #6cc0ff;border-radius:12px;padding:8px 8px 8px 14px;box-shadow:0 10px 30px #000a;max-width:calc(100% - 24px)}
+#install-bar .ib-text{font-size:13px;color:#e9eef2}
+#install-bar .ib-text b{color:#fff}
+#install-bar #install-btn{background:#2e7dd1;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-size:14px;font-weight:700;cursor:pointer;min-height:36px}
+#install-bar #install-btn:hover{background:#3a8fe0}
+#install-bar #install-close{background:transparent;border:0;color:#8ea0af;font-size:14px;cursor:pointer;padding:4px 6px}
 "#;
 
 fn shell(title: &str, body: Markup) -> Markup {
@@ -197,12 +203,17 @@ fn shell(title: &str, body: Markup) -> Markup {
                 link rel="icon" type="image/png" sizes="16x16" href="/static/branding/favicon-16.png";
                 link rel="apple-touch-icon" href="/static/branding/apple-touch-icon.png";
                 link rel="manifest" href="/static/branding/site.webmanifest";
+                meta name="apple-mobile-web-app-capable" content="yes";
+                meta name="apple-mobile-web-app-title" content="Catanou";
+                meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
                 style { (maud::PreEscaped(CSS)) }
                 script src="/static/htmx.min.js" defer {}
                 script src="/static/sse.js" defer {}
                 script src="/static/timer.js" defer {}
                 script src="/static/trade.js" defer {}
                 script src="/static/guide.js" defer {}
+                script src="/static/discard.js" defer {}
+                script src="/static/pwa.js" defer {}
             }
             body {
                 header.site {
@@ -1028,17 +1039,30 @@ fn dev_play_controls(game: &GameState, data: &RoomData, v: PlayerId, can_play: b
 
 fn discard_form(game: &GameState, code: &str, v: PlayerId) -> Markup {
     let p = &game.players[v];
-    let need = p.resources.total() / 2;
+    let total = p.resources.total();
+    let need = total / 2;
     html! {
-        p { "You have " (p.resources.total()) " cards and must discard " b { (need) } "." }
-        form hx-post=(format!("/room/{code}/action")) {
+        p { "You rolled a 7 and hold " b { (total) } " cards — discard " b { (need) } " down to half. Tap cards to choose." }
+        form #discard-form data-need=(need) hx-post=(format!("/room/{code}/action")) {
             input type="hidden" name="action" value="discard";
-            div.row {
+            div.picker {
                 @for r in ALL_RESOURCES {
-                    label title=(r.name()) { (resource_glyph(r)) " " input type="number" name=(r.slug()) min="0" max=(p.resources.get(r)) value="0" style="width:64px"; }
+                    @let have = p.resources.get(r);
+                    button.rcard.pick.disabled[have == 0] type="button" data-res=(r.slug())
+                        data-group="discard" data-max=(have) title=(r.name()) {
+                        span.pick-count data-count="0" { "0" }
+                        span.rcard-icon { (resource_glyph(r)) }
+                        span.rcard-name { (r.name()) }
+                    }
                 }
             }
-            div.row { button.btn.warn type="submit" title="Discard" { "🗑 " (need) } }
+            @for r in ALL_RESOURCES {
+                input type="hidden" name=(r.slug()) value="0";
+            }
+            div.row {
+                span.muted #discard-status { "0 / " (need) " selected" }
+                button #discard-btn.btn.warn type="submit" disabled { "🗑 Discard " (need) }
+            }
         }
     }
 }
@@ -1237,3 +1261,4 @@ fn build_guide() -> Markup {
         }
     }
 }
+
