@@ -36,7 +36,7 @@
     master.gain.value = muted ? 0 : 1;
     master.connect(ctx.destination);
     musicGain = ctx.createGain();
-    musicGain.gain.value = 0.09;
+    musicGain.gain.value = 0.32;
     musicGain.connect(master);
     sfxGain = ctx.createGain();
     sfxGain.gain.value = 0.85;
@@ -93,13 +93,15 @@
   ];
   var BAR_SECONDS = 3.4;
   var barCount = 0;
+  var droneStarted = false;
 
   function startMusic() {
     if (!ctx || started) {
       return;
     }
     started = true;
-    drone();
+    // The drone and the note scheduler are both kicked off from scheduleBar
+    // once the context is actually running (see below).
     scheduleBar();
   }
 
@@ -111,11 +113,11 @@
       o.type = "sine";
       o.frequency.value = f;
       var g = ctx.createGain();
-      g.gain.value = i ? 0.018 : 0.026;
+      g.gain.value = i ? 0.035 : 0.05;
       var lfo = ctx.createOscillator();
       lfo.frequency.value = 0.06 + i * 0.03;
       var lg = ctx.createGain();
-      lg.gain.value = 0.01;
+      lg.gain.value = 0.02;
       lfo.connect(lg);
       lg.connect(g.gain);
       lfo.start(t);
@@ -186,10 +188,16 @@
       setTimeout(scheduleBar, 600);
       return;
     }
+    // Start the drone the first time we know the clock is running, so it can
+    // never be created against a suspended context.
+    if (!droneStarted) {
+      droneStarted = true;
+      drone();
+    }
     var t = now() + 0.05;
     var ch = PROGRESSION[barCount % PROGRESSION.length];
 
-    pluck(ch.bass, t, 2.8, 0.05);
+    pluck(ch.bass, t, 2.8, 0.16);
 
     for (var b = 0; b < 4; b++) {
       if (Math.random() < 0.5) {
@@ -197,13 +205,13 @@
         if (Math.random() < 0.45) {
           n *= 2;
         }
-        pluck(n, t + b * (BAR_SECONDS / 4) + Math.random() * 0.08, 1.15, 0.045);
+        pluck(n, t + b * (BAR_SECONDS / 4) + Math.random() * 0.08, 1.15, 0.13);
       }
     }
 
     if (barCount % 4 === 2) {
-      whistle(ch.notes[1] * 2, t + 0.5, 1.5, 0.04);
-      whistle(ch.notes[2] * 2, t + 2.1, 1.1, 0.036);
+      whistle(ch.notes[1] * 2, t + 0.5, 1.5, 0.11);
+      whistle(ch.notes[2] * 2, t + 2.1, 1.1, 0.1);
     }
 
     barCount += 1;
