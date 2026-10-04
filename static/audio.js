@@ -36,7 +36,8 @@
     master.gain.value = muted ? 0 : 1;
     master.connect(ctx.destination);
     musicGain = ctx.createGain();
-    musicGain.gain.value = 0.32;
+    // Kept well under the SFX bus (0.85) so the theme stays a background bed.
+    musicGain.gain.value = 0.16;
     musicGain.connect(master);
     sfxGain = ctx.createGain();
     sfxGain.gain.value = 0.85;
