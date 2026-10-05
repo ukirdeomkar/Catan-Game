@@ -5,6 +5,16 @@ HTML + SVG board, live updates over SSE. No JavaScript framework, no database, n
 
 **Play it now: <https://playcatanou.duckdns.org>**
 
+---
+
+## Demo
+
+[![Watch the gameplay demo](docs/demo-poster.jpg)](docs/demo.mp4)
+
+Two minutes of a real game against Easy / Medium / Hard AI bots — snake-order setup,
+dice production, the robber, trades, and builds, with the procedurally synthesized
+soundtrack. *(Click the thumbnail to play.)*
+
 > Picking up development? Read **[HANDOVER.md](HANDOVER.md)** — status, architecture,
 > known gaps, and next steps.
 
