@@ -3,7 +3,7 @@ use crate::game::resources::{
     ALL_RESOURCES, Bundle, COST_CITY, COST_DEV, COST_ROAD, COST_SETTLEMENT, DevCard, Resource,
     ResourceHand,
 };
-use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerId};
+use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerId, TradeResponse};
 use crate::state::{RoomData, ViewMode};
 use maud::{DOCTYPE, Markup, html};
 
@@ -74,6 +74,7 @@ fn ic(name: &str) -> Markup {
         "swap" => r#"<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>"#,
         "trash" => r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>"#,
         "person" => r#"<circle cx="12" cy="8" r="4.4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>"#,
+        "angry" => r#"<circle cx="12" cy="12" r="9.5"/><path d="M16 16s-1.5-2-4-2-4 2-4 2"/><path d="M7.5 8 10 9"/><path d="m14 9 2.5-1"/><path d="M9 10h.01"/><path d="M15 10h.01"/>"#,
         _ => "",
     };
     let s = format!(
@@ -418,6 +419,7 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
             @let is_me = Some(pid) == viewer;
             @let is_turn = game.current == pid;
             @let is_light = matches!(p.color, Color::White);
+            @let is_bot = data.members.get(pid).map(|m| m.is_bot).unwrap_or(false);
             div.pcard.me[is_me].turn[is_turn].light[is_light] style=(format!("--pc:{}", color_hex(p.color))) {
                 div.phead {
                     span.pvp title="Victory points" { (ic("trophy")) (game.public_victory_points(pid)) }
@@ -433,6 +435,30 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                 @if is_turn && data.turn_seconds > 0 && data.turn_deadline_ms > 0
                     && matches!(game.phase, Phase::Play) {
                     span.ptimer data-deadline=(data.turn_deadline_ms) { "⏱ " span data-secs { "" } }
+                }
+                @if is_bot && matches!(game.phase, Phase::Play) {
+                    @let bot_level = data.members.get(pid).map(|m| m.level).unwrap_or_default();
+                    @let holds_grudges = bot_level != BotLevel::Easy;
+                    @let grudge = if holds_grudges { viewer.map(|v| game.anger(pid, v)).unwrap_or(0) } else { 0 };
+                    @let any_grudge = holds_grudges && game.max_anger(pid) > 0;
+                    @if grudge > 0 {
+                        div.phint.angry title="This bot is still cross with you" {
+                            span.ph-row { (ic("angry")) span.ph-angry { "Still cross with you" } }
+                        }
+                    } @else if !any_grudge {
+                        @let (need, gives) = crate::bot::trade_hint(game, pid, bot_level);
+                        @if need.is_some() && !gives.is_empty() {
+                            div.phint title="A rough idea of what this bot needs and will give" {
+                                @if let Some(r) = need {
+                                    span.ph-row { span.ph-l { "needs" } span.ph-r { (res_glyph(r)) } }
+                                }
+                                span.ph-row {
+                                    span.ph-l { "gives" }
+                                    @for r in &gives { span.ph-r { (res_glyph(*r)) } }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -891,10 +917,27 @@ fn trades_frag(game: &GameState, code: &str, viewer: Option<PlayerId>) -> Markup
             }
             @if Some(o.from) == viewer {
                 button.btn.icon.warn title="Withdraw offer" hx-post=(url) hx-vals=(r#"{"action":"cancel_trade"}"#) { (ic("x")) " Withdraw" }
-            } @else if viewer.is_some() {
-                div.row {
-                    button.btn title="Accept (first to accept trades)" hx-post=(url) hx-vals=(r#"{"action":"respond_trade","accept":"1"}"#) { (ic("check")) " Accept" }
-                    button.btn.sec title="Decline" hx-post=(url) hx-vals=(r#"{"action":"respond_trade","accept":"0"}"#) { (ic("x")) " Decline" }
+            } @else if let Some(v) = viewer {
+                @let my = o.responses.iter().find(|(p, _)| *p == v).map(|(_, r)| *r);
+                @let can_pay = o.want.can_pay(&game.players[v].resources);
+                @if my == Some(TradeResponse::Pending) && can_pay {
+                    div.row {
+                        button.btn title="Accept (first to accept trades)" hx-post=(url) hx-vals=(r#"{"action":"respond_trade","accept":"1"}"#) { (ic("check")) " Accept" }
+                        button.btn.sec title="Decline" hx-post=(url) hx-vals=(r#"{"action":"respond_trade","accept":"0"}"#) { (ic("x")) " Decline" }
+                    }
+                } @else if my == Some(TradeResponse::Pending) {
+                    div.row {
+                        span.muted { "You don't have what they want." }
+                        button.btn.sec title="Decline" hx-post=(url) hx-vals=(r#"{"action":"respond_trade","accept":"0"}"#) { (ic("x")) " Decline" }
+                    }
+                } @else if my == Some(TradeResponse::Declined) {
+                    @if can_pay {
+                        p.muted { "You declined this offer." }
+                    } @else {
+                        p.muted { "You don't have what they want — auto-declined." }
+                    }
+                } @else {
+                    p.muted { "Waiting for players to respond." }
                 }
             } @else {
                 p.muted { "Waiting for players to respond." }

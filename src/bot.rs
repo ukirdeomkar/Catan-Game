@@ -333,9 +333,6 @@ fn try_bank_trade(game: &GameState, pid: PlayerId, level: BotLevel) -> Option<Ac
 }
 
 fn evaluate_trade(game: &GameState, pid: PlayerId, level: BotLevel) -> bool {
-    if level == BotLevel::Easy {
-        return false;
-    }
     let Some(t) = game.trade.as_ref() else {
         return false;
     };
@@ -348,7 +345,16 @@ fn evaluate_trade(game: &GameState, pid: PlayerId, level: BotLevel) -> bool {
         received += t.give.get(r) as i32 * resource_value(game, pid, r);
         paid += t.want.get(r) as i32 * resource_value(game, pid, r);
     }
-    received > paid + 1
+    // A grudge makes the bot demand a much better deal (or refuse outright).
+    let spite = game.anger(pid, t.from) as i32 * 3;
+    match level {
+        // Naive: takes anything it can physically pay, even lopsided deals.
+        BotLevel::Easy => true,
+        // Wants a clear win (bigger if they've wronged us).
+        BotLevel::Medium => received > paid + 1 + spite,
+        // Only takes clearly good deals (bigger if they've wronged us).
+        BotLevel::Hard => received >= paid + 3 + spite,
+    }
 }
 
 fn choose_discard(game: &GameState, pid: PlayerId, level: BotLevel) -> Action {
@@ -421,7 +427,9 @@ fn robber_score(game: &GameState, pid: PlayerId, hex: usize) -> i32 {
         } else {
             let steal = game.players[owner].resources.total() as i32;
             let leader = if game.public_victory_points(owner) >= 7 { 3 } else { 0 };
-            score += block_pips + steal.min(6) + leader;
+            // Jealous of the leader, and still sore at whoever robbed us.
+            let spite = game.anger(pid, owner) as i32 * 3;
+            score += block_pips + steal.min(6) + leader + spite;
         }
     }
     score
@@ -436,10 +444,13 @@ fn choose_steal_victim(
     let candidates = game.steal_candidates(hex, pid);
     match level {
         BotLevel::Easy => candidates.first().copied(),
-        _ => candidates
-            .iter()
-            .copied()
-            .max_by_key(|&o| game.players[o].resources.total()),
+        _ => candidates.iter().copied().max_by_key(|&o| {
+            // Sore at a grudge holder first, then jealous of the leader, then
+            // just whoever holds the most cards.
+            let base = game.players[o].resources.total() as i32
+                + game.public_victory_points(o) as i32 * 2;
+            base + game.anger(pid, o) as i32 * 5
+        }),
     }
 }
 
@@ -516,18 +527,79 @@ fn road_value(game: &GameState, pid: PlayerId, edge: usize, level: BotLevel) -> 
 }
 
 /// Value of holding one more of a resource for this player.
+/// Expected pips a player produces of a resource from their settlements/cities.
+/// A card you produce a lot of is easy to replace, so it is worth less to keep.
+fn production_pips(game: &GameState, pid: PlayerId, r: Resource) -> u8 {
+    let mut total = 0u32;
+    for v in &game.board.vertices {
+        if v.owner != Some(pid) {
+            continue;
+        }
+        let mult = match v.building {
+            Building::City => 2u32,
+            Building::Settlement => 1,
+            Building::None => 0,
+        };
+        if mult == 0 {
+            continue;
+        }
+        for &hi in &v.hexes {
+            let h = &game.board.hexes[hi];
+            if h.terrain.resource() == Some(r) {
+                if let Some(n) = h.number {
+                    total += pip(n) as u32 * mult;
+                }
+            }
+        }
+    }
+    total as u8
+}
+
 fn resource_value(game: &GameState, pid: PlayerId, r: Resource) -> i32 {
+    let p = &game.players[pid];
     let need = next_build_need(game, pid, BotLevel::Medium).get(r) as i32;
-    let held = game.players[pid].resources.get(r) as i32;
+    let held = p.resources.get(r) as i32;
     let need_bonus = if need > 0 { 3 } else { 0 };
     let scarcity = (4 - held).max(0);
-    3 + need_bonus + scarcity
+    // Cards you produce in abundance are easy to replace.
+    let income_discount = (production_pips(game, pid, r) as i32 / 4).min(4);
+    // A fat hand is a liability: roll a 7 and you discard half of it.
+    let hold_penalty = ((p.resources.total() as i32 - 6).max(0) / 2).min(3);
+    (3 + need_bonus + scarcity - income_discount - hold_penalty).max(1)
 }
 
 /// Cost basket of the bot's most likely next purchase (used for trading and
-/// discarding decisions).
-fn next_build_need(game: &GameState, pid: PlayerId, _level: BotLevel) -> Bundle {
+/// discarding decisions). Hard also weighs its route to winning: the card that
+/// completes Largest Army, the road that takes Longest Road, or the cities that
+/// close the game out.
+fn next_build_need(game: &GameState, pid: PlayerId, level: BotLevel) -> Bundle {
     let p = &game.players[pid];
+    if level == BotLevel::Hard {
+        let vp = game.public_victory_points(pid);
+        let rival_army = (0..game.players.len())
+            .filter(|&i| i != pid)
+            .map(|i| game.players[i].played_knights)
+            .max()
+            .unwrap_or(0);
+        // One knight away from Largest Army (and not already behind a rival).
+        let army_push = game.largest_army != Some(pid)
+            && p.played_knights >= 2
+            && p.played_knights >= rival_army
+            && !game.dev_deck.is_empty();
+        // One road away from Longest Road.
+        let road_push =
+            game.longest_road != Some(pid) && game.longest_road_of(pid) >= 4 && p.roads_left > 0;
+        if army_push {
+            return COST_DEV;
+        }
+        if road_push {
+            return COST_ROAD;
+        }
+        // Closing in on the win: cities are the fastest victory points.
+        if vp >= 8 && p.cities_left > 0 && !game.legal_city_vertices(pid).is_empty() {
+            return COST_CITY;
+        }
+    }
     if p.settlements_left > 0 && !game.legal_settlement_vertices(pid).is_empty() {
         return COST_SETTLEMENT;
     }
@@ -541,6 +613,59 @@ fn next_build_need(game: &GameState, pid: PlayerId, _level: BotLevel) -> Bundle 
         return COST_ROAD;
     }
     COST_DEV
+}
+
+/// A deliberately coarse trade hint for a bot: `(need, gives)`, tuned by tier.
+///
+/// `need` is the single resource it is shortest of for its next build (or
+/// `None` if it lacks nothing). `gives` is usually a single card it has a
+/// surplus of — a normal 1-for-1 — but a *desperate* bot (completely out of the
+/// card it needs while sitting on a spare) may offer a second card, i.e.
+/// overpay. Difficulty changes what is advertised, matching how each tier
+/// actually trades:
+///   * Easy  — naive: offers any spare and overpays readily.
+///   * Medium — offers any spare; overpays only when clearly stuck.
+///   * Hard  — keeps a buffer, offers only a real surplus, never overpays.
+/// No quantities and no full hand, so a human gets a nudge to put an offer
+/// together without reading (and perfectly predicting) the bot.
+pub fn trade_hint(
+    game: &GameState,
+    pid: PlayerId,
+    level: BotLevel,
+) -> (Option<Resource>, Vec<Resource>) {
+    let p = &game.players[pid];
+    let need_b = next_build_need(game, pid, level);
+    let mut need: Option<(Resource, u8)> = None;
+    let mut surpluses: Vec<(Resource, u8)> = Vec::new();
+    for r in ALL_RESOURCES {
+        let have = p.resources.get(r);
+        let deficit = need_b.get(r).saturating_sub(have);
+        if deficit > 0 && need.map(|(_, d)| deficit > d).unwrap_or(true) {
+            need = Some((r, deficit));
+        }
+        let spare = have.saturating_sub(need_b.get(r));
+        let min_spare = if level == BotLevel::Hard { 2 } else { 1 };
+        if spare >= min_spare {
+            surpluses.push((r, spare));
+        }
+    }
+    surpluses.sort_by(|a, b| b.1.cmp(&a.1));
+    let need = need.map(|(r, _)| r);
+    let desperate = match need {
+        Some(r) => {
+            let best = surpluses.first().map(|(_, s)| *s).unwrap_or(0);
+            p.resources.get(r) == 0
+                && match level {
+                    BotLevel::Easy => best >= 1,
+                    BotLevel::Medium => best >= 2,
+                    BotLevel::Hard => false,
+                }
+        }
+        None => false,
+    };
+    let take = if desperate { 2 } else { 1 };
+    let gives = surpluses.iter().take(take).map(|(r, _)| *r).collect();
+    (need, gives)
 }
 
 fn best_vertex(game: &GameState, legal: &[usize], level: BotLevel) -> Option<usize> {
@@ -709,5 +834,118 @@ mod tests {
             assert_eq!(resources.total(), 10, "{level:?} must discard half of 20");
             assert!(resources.can_pay(&game.players[0].resources));
         }
+    }
+
+    #[test]
+    fn trade_hint_reports_surplus_and_needs() {
+        let mut game = GameState::new_lobby(bot_configs(2), 7);
+        game.start();
+        game.players[0].resources = crate::game::resources::ResourceHand([5, 0, 0, 0, 0]);
+        let (need, gives) = trade_hint(&game, 0, BotLevel::Medium);
+        assert!(need.is_some(), "a bot short on build cards should want something");
+        assert!(gives.contains(&Resource::Wood), "a wood surplus should be offered");
+    }
+
+    #[test]
+    fn trade_hint_is_empty_when_bot_has_no_cards() {
+        let mut game = GameState::new_lobby(bot_configs(2), 9);
+        game.start();
+        game.players[0].resources = crate::game::resources::ResourceHand([0, 0, 0, 0, 0]);
+        let (_need, gives) = trade_hint(&game, 0, BotLevel::Easy);
+        assert!(gives.is_empty(), "a bot with no cards has nothing to give");
+    }
+
+    #[test]
+    fn trade_hint_respects_bot_level() {
+        let mut game = GameState::new_lobby(bot_configs(2), 11);
+        game.start();
+        // Exactly one spare wood beyond the next (settlement) build.
+        game.players[0].resources = crate::game::resources::ResourceHand([2, 0, 0, 0, 0]);
+        let (_, easy_gives) = trade_hint(&game, 0, BotLevel::Easy);
+        let (_, hard_gives) = trade_hint(&game, 0, BotLevel::Hard);
+        assert!(!easy_gives.is_empty(), "easy offers its lone spare");
+        assert!(hard_gives.is_empty(), "hard keeps a one-card buffer back");
+    }
+
+    #[test]
+    fn easy_bot_accepts_a_lopsided_trade() {
+        let mut game = GameState::new_lobby(bot_configs(2), 13);
+        game.start();
+        // Player 1 holds plenty of the wood the offer wants.
+        game.players[1].resources = crate::game::resources::ResourceHand([3, 0, 0, 1, 0]);
+        game.trade = Some(crate::game::state::TradeOffer {
+            from: 0,
+            give: Bundle::of(Resource::Ore, 1),
+            want: Bundle::of(Resource::Wood, 1),
+            responses: vec![(1, TradeResponse::Pending)],
+            deadline_ms: 0,
+            id: 1,
+        });
+        assert!(evaluate_trade(&game, 1, BotLevel::Easy), "easy takes a bad deal");
+        assert!(!evaluate_trade(&game, 1, BotLevel::Medium), "medium declines it");
+        assert!(!evaluate_trade(&game, 1, BotLevel::Hard), "hard declines it");
+    }
+
+    #[test]
+    fn production_and_hand_size_lower_card_value() {
+        let mut game = GameState::new_lobby(bot_configs(2), 19);
+        game.start();
+        game.players[0].resources = crate::game::resources::ResourceHand::default();
+        let base = resource_value(&game, 0, Resource::Ore);
+
+        // Own a strong ore hex (number 6) and ore becomes cheap to replace.
+        game.board.hexes[0].terrain = crate::game::board::Terrain::Ore;
+        game.board.hexes[0].number = Some(6);
+        let v = game.board.hexes[0].vertices[0];
+        game.board.vertices[v].owner = Some(0);
+        game.board.vertices[v].building = Building::Settlement;
+        assert!(production_pips(&game, 0, Resource::Ore) > 0);
+        let produced = resource_value(&game, 0, Resource::Ore);
+        assert!(produced < base, "a resource you produce is worth less");
+
+        // Hoarding a big hand is a liability (7 → discard half).
+        game.players[0].resources = crate::game::resources::ResourceHand([0, 0, 0, 12, 0]);
+        let hoarding = resource_value(&game, 0, Resource::Ore);
+        assert!(hoarding < produced, "hoarding lowers card value further");
+    }
+
+    #[test]
+    fn hard_bot_targets_a_bonus_card_to_win() {
+        let mut game = GameState::new_lobby(bot_configs(2), 23);
+        game.start();
+        game.players[0].played_knights = 2; // one short of Largest Army
+        game.largest_army = None;
+        assert_eq!(
+            next_build_need(&game, 0, BotLevel::Hard),
+            COST_DEV,
+            "hard chases the knight for Largest Army"
+        );
+        assert_eq!(
+            next_build_need(&game, 0, BotLevel::Medium),
+            COST_SETTLEMENT,
+            "medium just expands"
+        );
+    }
+
+    #[test]
+    fn a_grudge_makes_the_bot_refuse_a_cheap_trade() {
+        let mut game = GameState::new_lobby(bot_configs(2), 29);
+        game.start();
+        // Player 1 holds plenty of wood; the offer gives brick (which it lacks)
+        // for wood — a modest win it would normally take.
+        game.players[1].resources = crate::game::resources::ResourceHand([4, 0, 0, 0, 0]);
+        game.trade = Some(crate::game::state::TradeOffer {
+            from: 0,
+            give: Bundle::of(Resource::Brick, 1),
+            want: Bundle::of(Resource::Wood, 1),
+            responses: vec![(1, TradeResponse::Pending)],
+            deadline_ms: 0,
+            id: 1,
+        });
+        assert!(evaluate_trade(&game, 1, BotLevel::Medium), "takes the deal normally");
+        // But after being robbed by player 0, it refuses unless the deal is
+        // clearly in its favour.
+        game.add_anger(1, 0);
+        assert!(!evaluate_trade(&game, 1, BotLevel::Medium), "spite rejects it");
     }
 }

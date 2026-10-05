@@ -198,6 +198,11 @@ pub struct GameState {
     pub steal_hex: Option<usize>,
     pub last_seed: u64,
     pub rng: Rng64,
+    /// Bot grudge matrix (personality flavour, not a rule): `anger[bot][target]`
+    /// is how cross `bot` is with `target`, 0–3. Bumps when a bot is robbed and
+    /// decays over its own turns.
+    #[serde(default)]
+    pub anger: Vec<Vec<u8>>,
 }
 
 pub struct PlayerConfig {
@@ -216,6 +221,7 @@ impl GameState {
             .enumerate()
             .map(|(i, c)| Player::new(i, c.name, c.color, c.is_bot))
             .collect();
+        let n = players.len();
         let robber_hex = board.robber_start();
         GameState {
             board,
@@ -244,6 +250,7 @@ impl GameState {
             steal_hex: None,
             last_seed: seed,
             rng,
+            anger: vec![vec![0u8; n]; n],
         }
     }
 
@@ -369,5 +376,53 @@ impl GameState {
     pub fn place_road(&mut self, pid: PlayerId, edge: usize) {
         self.board.edges[edge].owner = Some(pid);
         self.players[pid].roads_left -= 1;
+    }
+
+    // --- Bot grudges (personality) ---------------------------------------
+
+    /// How cross `bot` currently is with `target` (0–3).
+    pub fn anger(&self, bot: PlayerId, target: PlayerId) -> u8 {
+        self.anger
+            .get(bot)
+            .and_then(|row| row.get(target))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// The strongest grudge `bot` holds against anyone right now.
+    pub fn max_anger(&self, bot: PlayerId) -> u8 {
+        self.anger
+            .get(bot)
+            .and_then(|row| row.iter().copied().max())
+            .unwrap_or(0)
+    }
+
+    /// Make `bot` angrier at `target` (capped). No-op for self.
+    pub fn add_anger(&mut self, bot: PlayerId, target: PlayerId) {
+        if bot == target {
+            return;
+        }
+        self.ensure_anger();
+        if let Some(cell) = self.anger.get_mut(bot).and_then(|row| row.get_mut(target)) {
+            *cell = (*cell + 1).min(3);
+        }
+    }
+
+    /// Fade every grudge held by `bot` by one (called when its turn ends).
+    pub fn decay_anger(&mut self, bot: PlayerId) {
+        if let Some(row) = self.anger.get_mut(bot) {
+            for cell in row.iter_mut() {
+                *cell = cell.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Rebuild the matrix if a deserialised snapshot predates it or is the
+    /// wrong size.
+    fn ensure_anger(&mut self) {
+        let n = self.players.len();
+        if self.anger.len() != n || self.anger.iter().any(|row| row.len() != n) {
+            self.anger = vec![vec![0u8; n]; n];
+        }
     }
 }

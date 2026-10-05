@@ -3,7 +3,7 @@ use crate::game::board::{Board, Building, Terrain};
 use crate::game::resources::{Bundle, DevCard, Resource, ResourceHand};
 use crate::game::rng::Rng64;
 use crate::game::scoring::longest_road_length;
-use crate::game::state::{Color, GameState, Phase, PlayerConfig};
+use crate::game::state::{Color, GameState, Phase, PlayerConfig, TradeResponse};
 
 fn configs(n: usize) -> Vec<PlayerConfig> {
     (0..n)
@@ -492,6 +492,41 @@ fn player_trade_executes_on_accept() {
 }
 
 #[test]
+fn trade_with_no_possible_acceptor_is_rejected() {
+    let mut s = fresh(2, 42);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.players[0].resources = ResourceHand([2, 0, 0, 0, 0]);
+    s.players[1].resources = ResourceHand([0, 0, 0, 0, 0]); // holds no wheat
+    let give = Bundle::of(Resource::Wood, 1);
+    let want = Bundle::of(Resource::Wheat, 1);
+    assert!(
+        s.apply(0, &Action::ProposeTrade { give, want }).is_err(),
+        "an offer nobody can fulfil must be rejected outright"
+    );
+    assert!(s.trade.is_none());
+}
+
+#[test]
+fn trade_auto_declines_players_without_the_wanted_resource() {
+    let mut s = fresh(3, 43);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.players[0].resources = ResourceHand([2, 0, 0, 0, 0]);
+    s.players[1].resources = ResourceHand([0, 0, 0, 0, 0]); // cannot pay
+    s.players[2].resources = ResourceHand([0, 0, 1, 0, 0]); // can pay
+    let give = Bundle::of(Resource::Wood, 1);
+    let want = Bundle::of(Resource::Wheat, 1);
+    s.apply(0, &Action::ProposeTrade { give, want }).unwrap();
+    let o = s.trade.as_ref().unwrap();
+    let resp = |p| o.responses.iter().find(|(q, _)| *q == p).unwrap().1;
+    assert_eq!(resp(1), TradeResponse::Declined, "pauper auto-declined");
+    assert_eq!(resp(2), TradeResponse::Pending, "payer stays pending");
+}
+
+#[test]
 fn eight_cards_triggers_discard_on_a_seven() {
     // Regression: a hand of exactly 8 (>7) must be asked to discard, whether
     // the 7 is rolled by the human or by another player.
@@ -566,4 +601,22 @@ fn ten_victory_points_wins_the_game() {
     assert!(s.check_winner());
     assert_eq!(s.winner, Some(0));
     assert!(s.is_over());
+}
+
+#[test]
+fn robbing_a_bot_builds_a_grudge() {
+    let mut s = fresh(2, 60);
+    auto_setup(&mut s);
+    s.players[1].is_bot = true;
+    let hex = 0;
+    let v = s.board.hexes[hex].vertices[0];
+    s.board.vertices[v].owner = Some(1);
+    s.board.vertices[v].building = Building::Settlement;
+    s.current = 0;
+    s.phase = Phase::Steal { hex };
+    s.apply(0, &Action::StealFrom { player: Some(1) }).unwrap();
+    assert_eq!(s.anger(1, 0), 1, "a robbed bot is cross with the robber");
+    // The grudge fades as the bot plays its own turns.
+    s.decay_anger(1);
+    assert_eq!(s.anger(1, 0), 0, "grudges cool off over turns");
 }

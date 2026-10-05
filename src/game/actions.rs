@@ -510,6 +510,10 @@ impl GameState {
         if !candidates.contains(&victim) {
             return Err(RuleError::new("That player has no building there"));
         }
+        // A robbed bot holds a grudge against the robber.
+        if self.players[victim].is_bot {
+            self.add_anger(victim, actor);
+        }
         let stolen = self.take_random_resource(victim);
         let (vname, aname) = (
             self.players[victim].name.clone(),
@@ -659,10 +663,19 @@ impl GameState {
         if !give.can_pay(&self.players[actor].resources) {
             return Err(RuleError::new("You do not have those cards to offer"));
         }
-        let responses = (0..self.players.len())
+        // A player can only accept if they can actually pay what the proposer
+        // wants, so anyone who cannot is auto-declined up front instead of
+        // being shown an Accept button they can never use.
+        let responses: Vec<(PlayerId, TradeResponse)> = (0..self.players.len())
             .filter(|&p| p != actor)
-            .map(|p| (p, TradeResponse::Pending))
+            .map(|p| {
+                let can = want.can_pay(&self.players[p].resources);
+                (p, if can { TradeResponse::Pending } else { TradeResponse::Declined })
+            })
             .collect();
+        if responses.iter().all(|(_, r)| *r == TradeResponse::Declined) {
+            return Err(RuleError::new("No other player has those resources"));
+        }
         self.trade_seq += 1;
         let id = self.trade_seq;
         self.trade = Some(TradeOffer {
@@ -773,6 +786,11 @@ impl GameState {
         // Move newly bought development cards into the playable set.
         let new_cards = std::mem::take(&mut self.players[actor].new_dev_cards);
         self.players[actor].dev_cards.extend(new_cards);
+
+        // A bot cools off a little at the end of each of its own turns.
+        if self.players[actor].is_bot {
+            self.decay_anger(actor);
+        }
 
         self.trade = None;
         self.free_roads_left = 0;
