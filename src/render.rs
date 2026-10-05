@@ -373,6 +373,10 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             div #trades.trades sse-swap="trades" { (f.trades) }
             div #turn.dockwrap sse-swap="turn" { (f.turn) }
             div #hand.handstrip sse-swap="hand" { (f.hand) }
+            footer.gamefoot {
+                "Made with ♥ by "
+                a href="https://github.com/ukirdeomkar" target="_blank" rel="noopener" { "Omkar" }
+            }
             (menu_sheet(code, data, game, viewer))
             @if let Some(v) = viewer {
                 (trade_modal(game, data, v))
@@ -827,6 +831,9 @@ fn trade_modal(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
                 div.picker { (pick_cards("give", Some(&p.resources))) }
                 strong { "You want" }
                 div.picker { (pick_cards("want", None)) }
+                p.muted.small style="margin:-8px 0 10px" {
+                    "Tap a card to add it; tap it 5 times to cycle back to 0."
+                }
                 div.trade-preview {
                     span #preview-give { "—" }
                     span.arrow { "⇄" }
