@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Play Catanou — gameplay demo</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#12202f; color:#e8eef5;
+         font:16px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
+         display:flex; flex-direction:column; align-items:center; min-height:100vh; }
+  header { padding:20px 16px 4px; text-align:center; }
+  h1 { font-size:20px; margin:0 0 6px; }
+  p { margin:0; color:#9fb3c8; font-size:14px; }
+  main { width:100%; max-width:1000px; padding:18px; text-align:center; }
+  video { width:100%; height:auto; border-radius:12px; background:#000;
+          box-shadow:0 10px 34px rgba(0,0,0,.45); }
+  a.play { margin-top:20px; display:inline-block; background:#2f7d4f; color:#fff;
+           text-decoration:none; padding:11px 20px; border-radius:9px; font-weight:600; }
+  a.play:hover { background:#369159; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Play Catanou — gameplay demo</h1>
+  <p>Two minutes against Easy / Medium / Hard AI bots, with the synthesized soundtrack.</p>
+</header>
+<main>
+  <video controls playsinline preload="metadata" poster="demo-poster.jpg">
+    <source src="demo.mp4" type="video/mp4">
+    Your browser can’t play this video. <a href="demo.mp4">Download it</a>.
+  </video>
+  <div><a class="play" href="https://playcatanou.duckdns.org">Play Catanou →</a></div>
+</main>
+</body>
+</html>

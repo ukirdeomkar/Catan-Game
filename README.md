@@ -9,11 +9,13 @@ HTML + SVG board, live updates over SSE. No JavaScript framework, no database, n
 
 ## Demo
 
-[![Watch the gameplay demo](docs/demo-poster.jpg)](docs/demo.mp4)
+[![Watch the gameplay demo](docs/demo-poster.jpg)](https://ukirdeomkar.github.io/Catan-Game/demo.html)
 
-Two minutes of a real game against Easy / Medium / Hard AI bots — snake-order setup,
-dice production, the robber, trades, and builds, with the procedurally synthesized
-soundtrack. *(Click the thumbnail to play.)*
+▶️ **Watch the 2-minute demo** — a real game against Easy / Medium / Hard AI bots:
+snake-order setup, dice production, the robber, trades, and builds, with the
+procedurally synthesized soundtrack. *(Click the thumbnail, or open the
+[player page](https://ukirdeomkar.github.io/Catan-Game/demo.html) directly. The raw
+file is also in [`docs/demo.mp4`](docs/demo.mp4).)*
 
 > Picking up development? Read **[HANDOVER.md](HANDOVER.md)** — status, architecture,
 > known gaps, and next steps.
