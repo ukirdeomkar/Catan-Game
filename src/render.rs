@@ -424,9 +424,14 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
             @let is_turn = game.current == pid;
             @let is_light = matches!(p.color, Color::White);
             @let is_bot = data.members.get(pid).map(|m| m.is_bot).unwrap_or(false);
+            @let shown_vp = if game.is_over() {
+                game.total_victory_points(pid)
+            } else {
+                game.public_victory_points(pid)
+            };
             div.pcard.me[is_me].turn[is_turn].light[is_light] style=(format!("--pc:{}", color_hex(p.color))) {
                 div.phead {
-                    span.pvp title="Victory points" { (ic("trophy")) (game.public_victory_points(pid)) }
+                    span.pvp.revealed[game.is_over()] title="Victory points" { (ic("trophy")) (shown_vp) }
                     span.pname title=(p.name.as_str()) { (p.name) }
                 }
                 div.prow {
@@ -497,8 +502,9 @@ fn hand_frag(game: &GameState, _code: &str, v: PlayerId) -> Markup {
 
 fn controls_frag(game: &GameState, _data: &RoomData, viewer: Option<PlayerId>) -> Markup {
     if matches!(game.phase, Phase::GameOver) {
+        let w = game.winner.unwrap_or(0);
         return html! {
-            div.pill.win { (ic("trophy")) (game.players[game.winner.unwrap_or(0)].name) " wins!" }
+            div.pill.win { (ic("trophy")) (game.players[w].name) " wins with " (game.total_victory_points(w)) " VP!" }
         };
     }
     let Some(v) = viewer else { return Markup::default() };
@@ -638,7 +644,10 @@ fn build_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> 
     let mode_url = format!("/room/{}/mode", data.code);
     let mode = data.members.get(v).map(|m| m.mode).unwrap_or_default();
     let p = &game.players[v];
-    let road_dis = mode != ViewMode::Normal || !COST_ROAD.can_pay(&p.resources) || p.roads_left == 0;
+    let free_roads = game.free_roads_left > 0;
+    let road_dis = mode != ViewMode::Normal
+        || (!free_roads && !COST_ROAD.can_pay(&p.resources))
+        || p.roads_left == 0;
     let set_dis =
         mode != ViewMode::Normal || !COST_SETTLEMENT.can_pay(&p.resources) || p.settlements_left == 0;
     let city_dis =
@@ -653,8 +662,12 @@ fn build_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> 
             }
             div.build-grid {
                 button.build-opt hx-post=(mode_url) hx-vals=(r#"{"mode":"road"}"#) disabled[road_dis] {
-                    span.bo-top { (ic("road")) "Road" }
-                    (cost_span(COST_ROAD))
+                    span.bo-top { (ic("road")) @if free_roads { "Road (free)" } @else { "Road" } }
+                    @if free_roads {
+                        span.cost-free { (game.free_roads_left) " free" }
+                    } @else {
+                        (cost_span(COST_ROAD))
+                    }
                 }
                 button.build-opt hx-post=(mode_url) hx-vals=(r#"{"mode":"settlement"}"#) disabled[set_dis] {
                     span.bo-top { (ic("home")) "Settlement" }
@@ -670,6 +683,11 @@ fn build_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> 
                 }
             }
             p.muted.small style="margin:8px 2px 0" {
+                @if free_roads {
+                    "Road Building: " (game.free_roads_left) " free road"
+                    @if game.free_roads_left > 1 { "s" }
+                    " available. "
+                }
                 "Settlement and city pieces left: " (p.settlements_left) " / " (p.cities_left) " · Roads left: " (p.roads_left)
             }
         }
@@ -701,13 +719,17 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                 }
             }
             @if has(DevCard::RoadBuilding) {
+                @let road_ok = p.roads_left > 0 && !game.legal_road_edges(v).is_empty();
                 div.devrow {
                     div.dev-ic { (ic("road")) }
                     div.dev-body {
                         div.dev-name { "Road Building" }
                         div.dev-desc { (DevCard::RoadBuilding.description()) }
+                        @if !road_ok {
+                            div.dev-note { "No legal place to put a road right now." }
+                        }
                     }
-                    button.dockbtn hx-post=(url) hx-vals=(r#"{"action":"play_road_building"}"#) title="Play Road Building" { (ic("play")) }
+                    button.dockbtn disabled[!road_ok] hx-post=(url) hx-vals=(r#"{"action":"play_road_building"}"#) title="Play Road Building" { (ic("play")) }
                 }
             }
             @if has(DevCard::YearOfPlenty) {
@@ -743,6 +765,28 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                             button.dockbtn type="submit" title="Play" { (ic("play")) }
                         }
                     }
+                }
+            }
+            @let vp_playable = p
+                .dev_cards
+                .iter()
+                .filter(|c| **c == DevCard::VictoryPoint)
+                .count();
+            @if vp_playable > 0 {
+                div.devrow {
+                    div.dev-ic { (ic("trophy")) }
+                    div.dev-body {
+                        div.dev-name {
+                            "Victory Point"
+                            @if vp_playable > 1 { " ×" (vp_playable) }
+                        }
+                        div.dev-desc {
+                            "Worth " (vp_playable) " victory point"
+                            @if vp_playable > 1 { "s" }
+                            ". Counted automatically — no need to play."
+                        }
+                    }
+                    span.dev-auto { "Auto" }
                 }
             }
             @if !p.new_dev_cards.is_empty() {

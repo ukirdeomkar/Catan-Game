@@ -369,8 +369,18 @@ impl GameState {
     fn play_road_building(&mut self, actor: PlayerId) -> RuleResult {
         self.require_play_turn(actor)?;
         self.require_playable_dev(actor, DevCard::RoadBuilding)?;
+        // Never spend a card that cannot be used: a player with no road pieces
+        // left (or no legal edge to build on) must get a clear refusal instead
+        // of being left with a playable card and no valid placement.
+        if self.players[actor].roads_left == 0 {
+            return Err(RuleError::new("No road pieces left to place"));
+        }
+        if self.legal_road_edges(actor).is_empty() {
+            return Err(RuleError::new("No legal place to put a road right now"));
+        }
         self.remove_dev_card(actor, DevCard::RoadBuilding);
-        self.free_roads_left = 2;
+        // The card grants two roads, but only as many as remain in stock.
+        self.free_roads_left = 2.min(self.players[actor].roads_left);
         let name = self.players[actor].name.clone();
         self.push_log(Some(actor), format!("{name} plays Road Building."));
         Ok(())

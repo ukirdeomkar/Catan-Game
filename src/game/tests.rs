@@ -363,6 +363,72 @@ fn newly_bought_cards_cannot_be_played_same_turn() {
     }
 }
 
+#[test]
+fn road_building_places_two_free_roads() {
+    let mut s = fresh(2, 24);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].resources = ResourceHand::default();
+    s.players[0].dev_cards = vec![DevCard::RoadBuilding];
+
+    s.apply(0, &Action::PlayRoadBuilding).unwrap();
+    assert_eq!(s.free_roads_left, 2, "card grants two free roads");
+    assert!(
+        s.players[0].dev_cards.is_empty(),
+        "the card is consumed when played"
+    );
+
+    let mut built = 0;
+    while s.free_roads_left > 0 {
+        let edge = s.legal_road_edges(0).into_iter().next().expect("a legal edge");
+        s.apply(0, &Action::BuildRoad { edge }).unwrap();
+        built += 1;
+        assert!(built <= 2, "never more than two free roads");
+    }
+    assert_eq!(built, 2);
+    assert_eq!(s.players[0].resources.total(), 0, "free roads cost nothing");
+    assert_eq!(s.players[0].roads_left, 11, "two roads came out of stock");
+}
+
+#[test]
+fn road_building_refuses_when_it_cannot_be_used() {
+    let mut s = fresh(2, 25);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.played_dev_this_turn = false;
+    // No road pieces left: playing must fail without spending the card.
+    s.players[0].roads_left = 0;
+    s.players[0].dev_cards = vec![DevCard::RoadBuilding];
+    let err = s.apply(0, &Action::PlayRoadBuilding).unwrap_err();
+    assert!(err.0.contains("road"), "clear message: {}", err.0);
+    assert_eq!(
+        s.players[0].dev_cards,
+        vec![DevCard::RoadBuilding],
+        "an unusable card is not consumed"
+    );
+    assert_eq!(s.free_roads_left, 0);
+    assert!(!s.played_dev_this_turn);
+}
+
+#[test]
+fn road_building_grants_only_remaining_road_pieces() {
+    let mut s = fresh(2, 26);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.played_dev_this_turn = false;
+    s.players[0].roads_left = 1;
+    s.players[0].dev_cards = vec![DevCard::RoadBuilding];
+
+    s.apply(0, &Action::PlayRoadBuilding).unwrap();
+    assert_eq!(s.free_roads_left, 1, "capped by pieces in stock");
+    let edge = s.legal_road_edges(0).into_iter().next().expect("a legal edge");
+    s.apply(0, &Action::BuildRoad { edge }).unwrap();
+    assert_eq!(s.free_roads_left, 0);
+    assert_eq!(s.players[0].roads_left, 0);
+}
+
 // ---------------------------------------------------------------------------
 // Longest road
 // ---------------------------------------------------------------------------
@@ -601,6 +667,51 @@ fn ten_victory_points_wins_the_game() {
     assert!(s.check_winner());
     assert_eq!(s.winner, Some(0));
     assert!(s.is_over());
+}
+
+#[test]
+fn hidden_victory_point_cards_count_toward_the_win_but_stay_private() {
+    let mut s = fresh(2, 51);
+    auto_setup(&mut s);
+    let base = s.public_victory_points(0);
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint];
+    s.players[0].new_dev_cards = vec![DevCard::VictoryPoint, DevCard::VictoryPoint];
+    assert_eq!(s.public_victory_points(0), base, "hidden cards stay private");
+    assert_eq!(s.total_victory_points(0), base + 3, "but they still count");
+}
+
+#[test]
+fn nine_public_points_plus_a_hidden_card_is_a_win_at_ten() {
+    let mut s = fresh(2, 52);
+    auto_setup(&mut s);
+    // Rebuild player 0's board as 4 cities + 1 settlement = 9 public VP.
+    for v in s.board.vertices.iter_mut() {
+        v.owner = None;
+        v.building = Building::None;
+    }
+    s.players[0].cities_left = 4;
+    s.players[0].settlements_left = 1;
+    let mut built = 0;
+    for v in 0..s.board.vertices.len() {
+        if built < 4 && s.board.vertices[v].building == Building::None {
+            s.place_building(0, v, Building::City);
+            built += 1;
+        }
+    }
+    let sv = (0..s.board.vertices.len())
+        .find(|&v| s.board.vertices[v].building == Building::None)
+        .unwrap();
+    s.place_building(0, sv, Building::Settlement);
+    assert_eq!(s.public_victory_points(0), 9);
+
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint];
+    assert_eq!(s.total_victory_points(0), 10);
+    assert!(s.check_winner());
+    assert_eq!(s.winner, Some(0));
+    assert!(
+        s.log.iter().any(|l| l.text.contains("wins with 10 victory points")),
+        "the win log must report the true total"
+    );
 }
 
 #[test]

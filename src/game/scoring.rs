@@ -190,7 +190,8 @@ impl GameState {
                 self.winner = Some(pid);
                 self.phase = crate::game::state::Phase::GameOver;
                 let name = self.players[pid].name.clone();
-                self.push_log(Some(pid), format!("{name} wins with {} victory points!", WIN_VP));
+                let vp = self.total_victory_points(pid);
+                self.push_log(Some(pid), format!("{name} wins with {vp} victory points!"));
                 return true;
             }
         }
