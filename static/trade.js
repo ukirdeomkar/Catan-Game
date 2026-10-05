@@ -41,17 +41,16 @@
   }
   function refreshGiveCaps() {
     var counts = {};
-    document.querySelectorAll("#hand .rcard").forEach(function (c) {
-      var g = c.querySelector(".rcard-icon");
+    document.querySelectorAll("#hand .rcard[data-res]").forEach(function (c) {
+      var r = c.getAttribute("data-res");
       var n = c.querySelector(".rcard-count");
-      if (g && n) counts[g.textContent] = parseInt(n.textContent, 10) || 0;
+      counts[r] = n ? (parseInt(n.textContent, 10) || 0) : 0;
     });
     document.querySelectorAll('.pick[data-group="give"]').forEach(function (btn) {
-      var g = btn.querySelector(".rcard-icon");
-      var have = g && counts[g.textContent] !== undefined ? counts[g.textContent] : 0;
+      var r = btn.getAttribute("data-res");
+      var have = counts[r] !== undefined ? counts[r] : 0;
       btn.setAttribute("data-max", String(have));
       btn.classList.toggle("disabled", have <= 0);
-      var r = btn.getAttribute("data-res");
       if (state.give[r] > have) state.give[r] = have;
     });
   }

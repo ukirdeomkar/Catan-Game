@@ -277,10 +277,10 @@
     if (pc) { cur = pc.textContent.trim(); }
 
     var dice = null;
-    var dt = document.querySelector("#status .dice-wrap .dice-total");
+    var dt = document.querySelector("#turn .dice-wrap .dice-total, #status .dice-wrap .dice-total");
     if (dt) { dice = dt.textContent.replace(/[^0-9]/g, ""); }
 
-    var myTurn = !!document.querySelector("#turn .tg, #turn .tg-bar");
+    var myTurn = !!document.querySelector("#turn [data-my-turn]");
 
     var trade = null;
     var tc = document.querySelector("#trades .trade-card");

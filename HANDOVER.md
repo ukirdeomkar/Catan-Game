@@ -12,7 +12,7 @@ picking the project up. The user-facing/deployment guide is in `README.md`.
 | Rules engine (base game, complete) | ✅ done, 22 unit tests passing (18 engine + 4 bot) |
 | Random board generation each game | ✅ done |
 | Multiplayer rooms (2–4 players) | ✅ done (cookie sessions + SSE) |
-| Web UI (server-rendered HTML + SVG board + guided turn bar) | ✅ done, browser-tested (desktop + mobile) |
+| Web UI (server-rendered HTML + SVG board + colonist-style fixed layout) | ✅ done, browser-tested (desktop + mobile) |
 | Docker + systemd + docs | ✅ done |
 | **AI bots** | ✅ done — three difficulty tiers, paced turns (see §9) |
 | Expansions (Seafarers / Cities & Knights) | ❌ not started (architected to allow) |
@@ -52,7 +52,7 @@ Deploy: `docker compose up -d --build`, or the systemd unit in `deploy/catan.ser
 src/
   main.rs        Axum bootstrap, router mount, background sweeper/timer/bot tasks
   handlers.rs    HTTP routes, cookie sessions, SSE stream, action parsing/dispatch
-  render.rs      ALL HTML (maud) + inline SVG board + per-viewer fragments + turn bar
+  render.rs      ALL HTML (maud) + inline SVG board + per-viewer fragments + bottom dock/sheets
   state.rs       AppState, Room, Member, room codes, join/start, disk persistence, bot driver
   bot.rs         AI bot policy — choose_action() returns one legal Action per call
   game/          pure synchronous rules engine (no async, no IO)
@@ -63,7 +63,7 @@ src/
     resources.rs Resource, ResourceHand, Bundle, costs, DevCard, deck
     scoring.rs   Longest Road, Largest Army, victory points, win check
     rng.rs       Rng64 (serializable splitmix64) — enables exact snapshot resume
-static/          htmx.min.js + sse.js (vendored) + guide/trade/discard/timer/lobby/pwa/audio.js + sw.js
+static/          htmx.min.js + sse.js (vendored) + app.css + fonts/ + ui/trade/discard/timer/lobby/pwa/audio.js + sw.js
 Cargo.toml       deps + [profile.release] size tuning
 Dockerfile, docker-compose.yml, deploy/catan.service, README.md
 ```
@@ -150,7 +150,7 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 |----------|------|
 | Add/change a game rule or action | `game/actions.rs` (+ a test in `game/tests.rs`) |
 | Change board shape/distribution/ports | `game/board.rs` |
-| Change look/layout/interaction (incl. the turn bar) | `render.rs` + `static/guide.js` |
+| Change look/layout/interaction (dock, sheets, board art) | `render.rs` + `static/app.css` + `static/ui.js` |
 | Change bot strategy/difficulty | `src/bot.rs` (+ a test in `bot.rs`) |
 | Change bot pacing / turn timer | `state.rs` (`tick_bots`, `tick_turn_timers`) |
 | Add an endpoint or change form parsing | `handlers.rs` |
@@ -165,8 +165,12 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
    elements (`circle`/`line`/`polygon`); `SVGElement` has no `.click()`, so harnesses must
    dispatch a bubbling `MouseEvent` (see `docs/BROWSER-TESTING.md`). Action feedback is
    retargeted server-side with `HX-Retarget: #toasts`, not an inherited target.
-2. **Terrain uses emoji glyphs** (🌲🧱🌾⛰🐑🏜) as tile art — rendering differs by OS font.
-   Replace with SVG shapes if you want consistency.
+2. **Icons** — chrome/UI icons are inline SVG (Lucide, MIT) via `render.rs::ic`. Resource
+   icons are Icons8 PNGs vendored under `static/icons/` (wood/brick/wheat/ore/sheep) and
+   referenced by `res_icon_src`: as an HTML `<img>` via `res_glyph`, or an SVG `<image>` via
+   `res_image` (board hexes + port badges). The desert keeps a small hand-drawn cactus. The
+   UI font is self-hosted Nunito (`static/fonts/nunito-latin.woff2`). Note the Icons8 free
+   tier expects attribution — swap for licensed assets before any commercial use.
 3. **`connected` flag is approximate** — set on page load/SSE connect, not cleared in real
    time when a socket drops. There is no "player disconnected" UI yet.
 4. **Single port per vertex.** Ports are stored as one `Option<PortKind>` per vertex; if two

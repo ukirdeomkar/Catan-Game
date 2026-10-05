@@ -138,9 +138,10 @@ location / {
    Easy / Medium / Hard AI opponents.
 3. The host presses **Start** (at least 2 players).
 4. Place your two starting settlements + roads when prompted.
-5. On your turn: **Roll**, then **build / trade / play dev cards**, then **End turn**. While it
-   is your turn a guided bar at the bottom of the screen offers build, trade, dev-card, and
-   end-turn actions, plus a compact view of your hand.
+5. On your turn: **Roll**, then **build / trade / play dev cards**, then **End turn**. The
+   whole game fits one screen — a resource bank and player board across the top, the island in
+   the middle, and a bottom dock with dice and actions, plus your hand always visible. Build,
+   trade, dev-card, discard and robber choices open as bottom sheets.
 
 Everything is server-authoritative, so there is no way to cheat from the client.
 
@@ -161,7 +162,7 @@ browser — an in-app **Install** button appears when the browser says it's inst
 src/
   main.rs        Axum server, background room sweeper
   handlers.rs    HTTP routes, cookies/sessions, SSE, action dispatch
-  render.rs      maud HTML templates + inline SVG board + guided turn bar
+  render.rs      maud HTML templates + inline SVG board + colonist-style fixed layout
   state.rs       Room registry, membership, on-disk snapshots, bot driver
   bot.rs         AI bot policy (Easy / Medium / Hard), one Action per call
   game/          Pure, synchronous, fully unit-tested rules engine
@@ -175,7 +176,7 @@ static/          htmx + SSE extension (vendored) + guide/trade/timer scripts
 ```
 
 - Player actions are `htmx` POSTs; the whole room is re-rendered and pushed to every
-  player over SSE. Each connection renders its own private view (hand, controls, turn bar).
+  player over SSE. Each connection renders its own private view (hand, dock, bottom sheets).
 - The rules engine never touches async or IO, so it is trivially testable, and bots are just
   another source of `Action`s against `GameState` (see `src/bot.rs`).
 

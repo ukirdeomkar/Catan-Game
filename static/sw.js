@@ -5,17 +5,26 @@
 // to give a small offline fallback. The game itself is live over SSE, so we
 // never cache game traffic — only the static app shell.
 
-const CACHE = "catanou-v1";
+const CACHE = "catanou-v2";
 
 // App-shell assets, pre-cached on install. Failures are ignored per-file so a
 // single missing asset can never wedge the worker install.
 const SHELL = [
   "/",
+  "/static/app.css",
+  "/static/fonts/nunito-latin.woff2",
+  "/static/icons/wood.png",
+  "/static/icons/brick.png",
+  "/static/icons/wheat.png",
+  "/static/icons/ore.png",
+  "/static/icons/sheep.png",
   "/static/htmx.min.js",
   "/static/sse.js",
   "/static/timer.js",
   "/static/trade.js",
-  "/static/guide.js",
+  "/static/ui.js",
+  "/static/discard.js",
+  "/static/audio.js",
   "/static/pwa.js",
   "/static/branding/logo-128.webp",
   "/static/branding/landscape.webp",

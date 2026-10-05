@@ -182,10 +182,15 @@ the turn (`"Turn ended by timer."` in the log) and the next player's timer arms.
 { pageId: <id>, viewport: "390x844x3,mobile,touch" }
 ```
 
-Then screenshot and verify: players dashboard on top, play controls (including
-⇄) visible above the board without scrolling (`#controls` is sticky on mobile),
-resource hand as cards, trade modal fits. Reset with
+Then screenshot and verify: the whole game fits one screen with **no page scroll** —
+top bar (menu + resource bank + your dev/VP), the player strip (you leftmost, active
+player shows `⏱ Ns`), the board filling the middle, the bottom dock (dice + build/trade/
+dev/end buttons) and the hand strip. Open the Build / Trade / Menu buttons and check the
+bottom sheets appear and are scrollable within themselves. Reset with
 `viewport: "1280x800x1"` when done.
+
+Note: `beforeinstallprompt` may pop the PWA install bar over the dock while testing; it is
+raised above the dock via `#install-bar{bottom:160px}` but is harmless.
 
 ---
 
@@ -222,21 +227,32 @@ resource hand as cards, trade modal fits. Reset with
 
 ---
 
-## 11. Guided turn bar
+## 11. Bottom dock and sheets
 
-When it is your turn in `Phase::Play`, `#turn` holds the action UI and `guide.js`
-hides `#controls`. States:
+The in-game screen is a fixed, no-scroll shell (`body.game`, `#app` in `render.rs`).
+Per-viewer regions, all swapped over SSE:
 
-- `.tg` — full-screen roll prompt, dismissable via `[data-tg-dismiss]`.
-- `.tg-bar` (bottom, `position:fixed`) — build 🛠 sub-menu, trade **⇄** (only with
-  cards), dev cards 🃏, and **End turn** ▶.
-- `.tg-sub[data-sub="build"]` — road 🛣 / settlement 🏠 / city 🏙 / back ←.
+- `#status` — top bar: menu button (`[data-sheet-open="menu"]`), resource bank from
+  `game.bank`, and your dev-card / VP chips.
+- `#players` — player strip, **rotated so the viewer is leftmost**; `.pcard.turn` is the
+  active seat and carries the `[data-deadline]` / `[data-secs]` turn timer.
+- `#board` — the SVG, flex-filled (`preserveAspectRatio="xMidYMid meet"`).
+- `#controls` — a floating status pill (waiting / robber / win); empty when it is your move.
+- `#turn` — the **dock**: dice + action buttons. `[data-my-turn]` marks your actionable
+  turn (audio.js uses it). On your turn, before rolling it shows a single `.dockbtn.primary`
+  Roll button; after rolling it shows build / trade / dev / end buttons. The dock also
+  **contains the bottom sheets** (`.sheet[data-sheet=...]`): `build`, `dev`, `steal`
+  (mandatory, `[data-auto]`), and `discard` (mandatory).
+- `#hand` — the always-visible resource hand strip (`.rcard[data-res]` + `.rcard-count`).
+- `#trades` — the floating active-offer card.
 
-`data-step` (`roll` / `build` / `menu`) drives re-renders on each SSE swap. Note
-the base rule `.tg-sub[hidden]{display:none}`: `[hidden]` alone loses to the
-author rule `.tg-menu,.tg-sub{display:flex}`. Verify the bar is fully on-screen on
-mobile (it is fixed to the viewport bottom; `#controls` is sticky at the top when
-it is *not* your turn).
+Sheets are toggled by `static/ui.js`: `[data-sheet-open="name"]` opens, `[data-sheet-close]`
+closes, any action fired from inside a sheet closes it, and `ui.js` re-applies sheet
+visibility after every SSE swap so a sheet survives the fragment re-render. Mandatory
+sheets (`data-auto`) force-open and cannot be dismissed by the user.
+
+The trade picker (`#trade-modal.modal`) is still managed by `static/trade.js`, but is now
+styled as a bottom sheet. `ui.js` leaves it alone.
 
 ---
 
@@ -251,3 +267,8 @@ it is *not* your turn).
   it never ends. Read state from the DOM instead.
 - **Viewport resets between sessions** can leave you on a mobile layout; always
   reset with `chrome-devtools_emulate` `1280x800x1` before a desktop assertion.
+- **The service worker caches `/static/` (stale-while-revalidate), so CSS/JS edits
+  appear one reload late.** When iterating on `app.css`/`ui.js`, either clear it in
+  the page (`await caches.keys().then(k=>Promise.all(k.map(caches.delete)))` +
+  `navigator.serviceWorker.getRegistrations().then(r=>r.forEach(x=>x.unregister()))`)
+  and reload with `ignoreCache: true`, or bump `CACHE` in `static/sw.js`.
