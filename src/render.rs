@@ -852,6 +852,15 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
     let Some(v) = viewer else {
         return Markup::default();
     };
+    // A discard-on-7 is mandatory and easy to miss in the side controls panel,
+    // so prompt it front-and-centre in the turn bar (which is never hidden).
+    if matches!(game.phase, Phase::Discard) && game.pending_discards.contains(&v) {
+        return html! {
+            div.tg data-step="discard" {
+                div.tg-card { (discard_form(game, &data.code, v)) }
+            }
+        };
+    }
     if game.current != v || !matches!(game.phase, Phase::Play) {
         return Markup::default();
     }
@@ -895,6 +904,7 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
     let road_dis = !COST_ROAD.can_pay(&p.resources) || p.roads_left == 0;
     let set_dis = !COST_SETTLEMENT.can_pay(&p.resources) || p.settlements_left == 0;
     let city_dis = !COST_CITY.can_pay(&p.resources) || p.cities_left == 0;
+    let dev_dis = game.dev_deck.is_empty() || !COST_DEV.can_pay(&p.resources);
 
     html! {
         div.tg-bar data-step="menu" {
@@ -913,6 +923,7 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
                 button.btn.icon.sec hx-post=(mode_url) hx-vals="{\"mode\":\"road\"}" disabled[road_dis] title="Build road" { "🛣" }
                 button.btn.icon.sec hx-post=(mode_url) hx-vals="{\"mode\":\"settlement\"}" disabled[set_dis] title="Build settlement" { "🏠" }
                 button.btn.icon.sec hx-post=(mode_url) hx-vals="{\"mode\":\"city\"}" disabled[city_dis] title="Build city" { "🏙" }
+                button.btn.icon.sec hx-post=(url) hx-vals="{\"action\":\"buy_dev\"}" disabled[dev_dis] title="Buy development card" { "🃏" }
                 button.btn.icon.sec type="button" data-tg-back title="Back" { "←" }
             }
             @if has_dev {
@@ -941,7 +952,7 @@ fn controls_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
             }
             Phase::Discard => {
                 @if game.pending_discards.contains(&v) {
-                    (discard_form(game, &data.code, v))
+                    p.muted { "Discard down to half in the prompt below." }
                 } @else {
                     p.muted { "Waiting for other players to discard." }
                 }
@@ -1047,7 +1058,7 @@ fn discard_form(game: &GameState, code: &str, v: PlayerId) -> Markup {
     let total = p.resources.total();
     let need = total / 2;
     html! {
-        p { "You rolled a 7 and hold " b { (total) } " cards — discard " b { (need) } " down to half. Tap cards to choose." }
+        p { "A 7 was rolled and you hold " b { (total) } " cards — discard " b { (need) } " down to half. Tap cards to choose." }
         form #discard-form data-need=(need) hx-post=(format!("/room/{code}/action")) {
             input type="hidden" name="action" value="discard";
             div.picker {

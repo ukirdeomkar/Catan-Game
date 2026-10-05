@@ -84,6 +84,26 @@ fn board_has_correct_terrain_distribution() {
 }
 
 #[test]
+fn red_numbers_never_adjacent() {
+    // 6 and 8 are the red tokens and may not share a hex edge, for any seed.
+    for seed in 0..200u64 {
+        let b = Board::generate(&mut Rng64::new(seed));
+        let is_red = |n: u8| n == 6 || n == 8;
+        for e in &b.edges {
+            if e.hexes.len() == 2 {
+                let (a, c) = (e.hexes[0], e.hexes[1]);
+                let ra = b.hexes[a].number.is_some_and(is_red);
+                let rc = b.hexes[c].number.is_some_and(is_red);
+                assert!(
+                    !(ra && rc),
+                    "seed {seed}: red tokens adjacent at hexes {a} and {c}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn board_is_random_per_seed() {
     let a = Board::generate(&mut Rng64::new(1));
     let b = Board::generate(&mut Rng64::new(2));
@@ -442,6 +462,57 @@ fn player_trade_executes_on_accept() {
     assert_eq!(s.players[1].resources.get(Resource::Wood), 1);
     assert_eq!(s.players[1].resources.get(Resource::Wheat), 2);
     assert!(s.trade.is_none());
+}
+
+#[test]
+fn eight_cards_triggers_discard_on_a_seven() {
+    // Regression: a hand of exactly 8 (>7) must be asked to discard, whether
+    // the 7 is rolled by the human or by another player.
+    let mut seen = 0;
+    for seed in 0..200_000u64 {
+        let mut s = fresh(3, seed);
+        auto_setup(&mut s);
+        for p in s.players.iter_mut() {
+            p.resources = ResourceHand::default();
+        }
+        s.players[0].resources = ResourceHand([0, 0, 0, 0, 8]);
+        s.players[1].resources = ResourceHand([0, 0, 0, 0, 8]);
+        s.players[2].resources = ResourceHand([0, 0, 0, 0, 8]);
+        s.current = 0;
+        s.dice = None;
+        s.phase = Phase::Play;
+        s.apply(0, &Action::RollDice).unwrap();
+        if s.dice.map(|(a, b)| a + b) == Some(7) {
+            seen += 1;
+            assert_eq!(
+                s.pending_discards,
+                vec![0, 1, 2],
+                "seed {seed}: all three 8-card hands must discard"
+            );
+            // The other players (bots) discarding first must not drop the
+            // human from the pending list or end the discard phase.
+            s.apply(
+                1,
+                &Action::Discard {
+                    resources: Bundle([0, 0, 0, 0, 4]),
+                },
+            )
+            .unwrap();
+            s.apply(
+                2,
+                &Action::Discard {
+                    resources: Bundle([0, 0, 0, 0, 4]),
+                },
+            )
+            .unwrap();
+            assert_eq!(s.pending_discards, vec![0]);
+            assert!(matches!(s.phase, Phase::Discard));
+        }
+        if seen >= 5 {
+            break;
+        }
+    }
+    assert!(seen >= 5, "test never rolled a 7");
 }
 
 // ---------------------------------------------------------------------------

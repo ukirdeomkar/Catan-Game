@@ -281,6 +281,10 @@ impl Board {
             token += 1;
         }
 
+        // The spiral deal can land red tokens (6/8) side by side; the rules
+        // forbid that, so repair it by swapping tokens until none touch.
+        spread_red_numbers(&mut numbers_by_hex, &hex_neighbors, rng);
+
         let mut hexes = Vec::with_capacity(coords.len());
         for (i, &(q, r)) in coords.iter().enumerate() {
             let (cx, cy) = centers[i];
@@ -432,6 +436,81 @@ fn spread_terrains<R: Rng>(terrains: &mut [Terrain], neighbors: &[Vec<usize>], r
         temperature *= 0.999;
         if temperature < 0.05 {
             temperature = 1.5;
+        }
+    }
+}
+
+/// The red number tokens (6 and 8) may not sit on adjacent hexes. The spiral
+/// deal ignores adjacency, so any red pair sharing an edge is broken up here
+/// by swapping a conflicting token with a non-red, non-desert token until no
+/// red neighbours remain. Swaps preserve the official token multiset.
+fn spread_red_numbers<R: Rng>(
+    numbers: &mut [Option<u8>],
+    neighbors: &[Vec<usize>],
+    rng: &mut R,
+) {
+    use rand::RngExt;
+    use rand::prelude::IndexedRandom;
+    fn is_red(n: u8) -> bool {
+        n == 6 || n == 8
+    }
+
+    let conflicts = |nums: &[Option<u8>]| -> usize {
+        let mut c = 0usize;
+        for i in 0..nums.len() {
+            let Some(ni) = nums[i] else { continue };
+            if !is_red(ni) {
+                continue;
+            }
+            for &j in &neighbors[i] {
+                if j > i && nums[j].is_some_and(is_red) {
+                    c += 1;
+                }
+            }
+        }
+        c
+    };
+
+    let candidates: Vec<usize> = (0..numbers.len())
+        .filter(|&i| numbers[i].is_some_and(|n| !is_red(n)))
+        .collect();
+    if candidates.is_empty() {
+        return;
+    }
+
+    let mut cur = conflicts(numbers);
+    let mut attempts = 0usize;
+    while cur > 0 && attempts < 20_000 {
+        attempts += 1;
+
+        // Pick a red hex that currently touches another red token.
+        let conflicting: Vec<usize> = (0..numbers.len())
+            .filter(|&i| {
+                numbers[i].is_some_and(is_red)
+                    && neighbors[i].iter().any(|&j| numbers[j].is_some_and(is_red))
+            })
+            .collect();
+        if conflicting.is_empty() {
+            break;
+        }
+
+        // Swap it with a hex currently holding a non-red token (recomputed
+        // each pass because earlier swaps move tokens between hexes).
+        let targets: Vec<usize> = (0..numbers.len())
+            .filter(|&k| numbers[k].is_some_and(|n| !is_red(n)))
+            .collect();
+        if targets.is_empty() {
+            break;
+        }
+
+        let &i = conflicting.choose(rng).unwrap();
+        let &j = targets.choose(rng).unwrap();
+        numbers.swap(i, j);
+        let next = conflicts(numbers);
+        if next < cur || (next == cur && rng.random::<f64>() < 0.5) {
+            cur = next;
+        } else {
+            numbers.swap(i, j);
         }
     }
 }
