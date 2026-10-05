@@ -3,6 +3,8 @@
 A small, self-hosted multiplayer **Settlers of Catan**. Rust backend, server-rendered
 HTML + SVG board, live updates over SSE. No JavaScript framework, no database, no bloat.
 
+**Play it now: <https://playcatanou.duckdns.org>**
+
 > Picking up development? Read **[HANDOVER.md](HANDOVER.md)** — status, architecture,
 > known gaps, and next steps.
 
