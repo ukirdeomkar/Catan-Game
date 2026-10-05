@@ -52,13 +52,14 @@ footer.site a{color:#ffeaa7;font-weight:700;text-decoration:none}
 /* Game shell — fixed, no page scroll (colonist-style) */
 body.game{height:100dvh;overflow:hidden;background:linear-gradient(180deg,#1d7aae 0%,#0e5c8e 55%,#0a4a76 100%);color:#fff;display:flex;flex-direction:column}
 body.game #app{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;height:100%;padding-bottom:env(safe-area-inset-bottom)}
-body.game #busy{position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:80;color:#fff;background:#00000055;border-radius:999px;padding:2px 10px;font-size:12px}
 
 /* Top bar: menu + bank + your dev/VP */
 .topbar{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 8px 4px;flex-wrap:nowrap}
 .tb-btn{width:38px;height:38px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-radius:11px;background:#ffffff22;color:#fff;font-size:19px;cursor:pointer}
 .tb-btn:hover{background:#ffffff33}
 .bank{display:flex;gap:4px;margin:0 auto;flex-wrap:nowrap;flex:1 1 auto;justify-content:center;min-width:0;overflow:hidden}
+.bank-ic{display:flex;align-items:center;justify-content:center;color:#fff;opacity:.92;flex:0 0 auto}
+.bank-ic .ic{width:20px;height:20px}
 .reschip{display:flex;align-items:center;gap:4px;background:var(--rc,#3f6ba0);color:#fff;border-radius:9px;padding:3px 6px 3px 5px;font-weight:800;font-size:12px;line-height:1;flex:0 1 auto;box-shadow:0 2px 5px #0003;border:1px solid #00000026}
 .reschip .rc-glyphbox{display:flex;color:#fff;background:#ffffff33;border-radius:999px;padding:2px}
 .reschip .rc-glyphbox .glyph{width:14px;height:14px}
@@ -73,14 +74,16 @@ body.game #audio-toggle.off{opacity:.5}
 
 /* Player strip */
 .pstrip{flex:0 0 auto;display:flex;gap:5px;padding:0 7px 5px;overflow:hidden}
-.pstrip .pcard{position:relative;background:#ffffff1c;border-radius:11px;padding:5px 6px 6px;gap:2px;align-items:stretch;color:#fff;border:2px solid transparent}
-.pstrip .pcard.me{border-color:#ffe27a}
-.pstrip .pcard.turn{background:#ffffff33;box-shadow:0 0 0 2px #ffd84d inset}
+.pstrip .pcard{position:relative;background:var(--pc,#4a6ea8);border-radius:11px;padding:5px 6px 6px;gap:2px;align-items:stretch;color:#fff;border:2px solid #ffffff2e;box-shadow:0 2px 6px #0003}
+.pstrip .pcard.light{color:#22303c}
+.pstrip .pcard.me{border-color:#ffffff}
+.pstrip .pcard.turn{border-color:#ffd84d;box-shadow:0 0 12px #ffd84d99}
 .pstrip .phead{display:flex;align-items:center;gap:5px;min-width:0}
-.pstrip .pvp{display:inline-flex;align-items:center;gap:2px;height:19px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:900;color:#22303c;background:#fff;border:1.5px solid var(--pc,#2b3a47);flex:0 0 auto}
+.pstrip .pvp{display:inline-flex;align-items:center;gap:2px;height:19px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:900;color:#22303c;background:#fff;border:1.5px solid #0000002e;flex:0 0 auto}
 .pstrip .pvp .ic{width:12px;height:12px;color:#c9a227}
 .pstrip .pname{flex:1;font-size:12px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px #0004}
-.pstrip .prow{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#f2f6f9}
+.pstrip .pcard.light .pname{text-shadow:none}
+.pstrip .prow{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:inherit}
 .pstrip .prow .stat{display:flex;align-items:center;gap:2px}
 .pstrip .prow .ic{width:13px;height:13px;opacity:.9}
 .pstrip .prow .glyph{width:12px;height:12px}
@@ -243,6 +246,7 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
  .reschip .rc-glyphbox .glyph{width:13px;height:13px}
  .tb-chip{padding:4px 5px;font-size:11px}
  .tb-chip .ic{width:14px;height:14px}
+ .bank-ic .ic{width:17px;height:17px}
  .pstrip .prow{gap:4px;font-size:10px}
  .pstrip .pname{font-size:11px}
 }

@@ -111,7 +111,7 @@ impl GameState {
             .map(|pid| longest_road_length(&self.board, pid))
             .collect();
         let best = lens.iter().copied().max().unwrap_or(0);
-        self.longest_road = if best < 5 {
+        let new = if best < 5 {
             None
         } else {
             let candidates: Vec<PlayerId> = (0..lens.len()).filter(|&p| lens[p] == best).collect();
@@ -123,6 +123,21 @@ impl GameState {
                 None
             }
         };
+        if new != self.longest_road {
+            match new {
+                Some(p) => {
+                    let name = self.players[p].name.clone();
+                    self.push_log(Some(p), format!("{name} takes Longest Road ({best})."));
+                }
+                None => {
+                    if let Some(h) = self.longest_road {
+                        let name = self.players[h].name.clone();
+                        self.push_log(None, format!("{name} loses Longest Road."));
+                    }
+                }
+            }
+        }
+        self.longest_road = new;
     }
 
     fn recompute_largest_army(&mut self) {
@@ -130,7 +145,7 @@ impl GameState {
             .map(|pid| self.players[pid].played_knights)
             .collect();
         let best = knights.iter().copied().max().unwrap_or(0);
-        self.largest_army = if best < 3 {
+        let new = if best < 3 {
             None
         } else {
             let candidates: Vec<PlayerId> =
@@ -143,6 +158,21 @@ impl GameState {
                 None
             }
         };
+        if new != self.largest_army {
+            match new {
+                Some(p) => {
+                    let name = self.players[p].name.clone();
+                    self.push_log(Some(p), format!("{name} takes Largest Army ({best} knights)."));
+                }
+                None => {
+                    if let Some(h) = self.largest_army {
+                        let name = self.players[h].name.clone();
+                        self.push_log(None, format!("{name} loses Largest Army."));
+                    }
+                }
+            }
+        }
+        self.largest_army = new;
     }
 
     /// Count the number of Victory Point dev cards across the board (for UI hints).

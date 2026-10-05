@@ -420,6 +420,33 @@ fn longest_road_card_requires_five_and_handles_ties() {
     assert_eq!(s.longest_road, Some(0));
 }
 
+#[test]
+fn taking_longest_road_is_logged() {
+    let mut s = fresh(2, 32);
+    for e in s.board.edges.iter_mut() {
+        e.owner = None;
+    }
+    let verts = s.board.hexes[0].vertices;
+    for i in 0..6 {
+        let (a, b) = (verts[i], verts[(i + 1) % 6]);
+        let e = s
+            .board
+            .edges
+            .iter()
+            .position(|ed| (ed.a == a && ed.b == b) || (ed.a == b && ed.b == a))
+            .unwrap();
+        s.board.edges[e].owner = Some(0);
+    }
+    let before = s.log.len();
+    s.recompute_special_cards();
+    assert_eq!(s.longest_road, Some(0));
+    assert!(s.log.len() > before, "award should be written to the log");
+    assert!(
+        s.log.iter().any(|l| l.text.contains("Longest Road")),
+        "log should announce the Longest Road award"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Trading
 // ---------------------------------------------------------------------------

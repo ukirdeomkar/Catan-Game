@@ -93,7 +93,7 @@
   var logInit = false;
   var lastLog = null;
   var OUTCOME =
-    /complete a trade|declined|withdrawn|expired|moves the robber|steals a card|finds nothing|= 7\.|plays a Knight/i;
+    /complete a trade|declined|withdrawn|expired|moves the robber|steals a card|finds nothing|= 7\.|plays a Knight|takes Longest Road|takes Largest Army|loses Longest Road|loses Largest Army/i;
 
   function notify(text) {
     var box = document.getElementById("notif");

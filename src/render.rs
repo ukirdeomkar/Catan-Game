@@ -63,6 +63,7 @@ fn ic(name: &str) -> Markup {
         "log" => r#"<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>"#,
         "trophy" => r#"<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>"#,
         "shield" => r#"<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>"#,
+        "army" => r#"<path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/><path d="M6 3 3 6"/>"#,
         "users" => r#"<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>"#,
         "road" => r#"<circle cx="6" cy="19" r="2.6"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="2.6"/>"#,
         "home" => r#"<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>"#,
@@ -376,7 +377,6 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
                 (trade_modal(game, data, v))
             }
         }
-        span #busy.muted { "…" }
     })
 }
 
@@ -384,12 +384,11 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
 // Top bar: menu + bank + your dev/VP
 // ---------------------------------------------------------------------------
 
-fn status_frag(game: &GameState, _data: &RoomData, viewer: Option<PlayerId>) -> Markup {
-    let vp = viewer.map(|v| game.public_victory_points(v));
-    let dev = viewer.map(|v| game.players[v].all_dev_cards().count());
+fn status_frag(game: &GameState, _data: &RoomData, _viewer: Option<PlayerId>) -> Markup {
     html! {
         button.tb-btn type="button" data-sheet-open="menu" title="Menu & info" aria-label="Menu" { (ic("menu")) }
         div.bank title="Resources left in the bank" {
+            span.bank-ic title="Bank" { (ic("bank")) }
             @for r in ALL_RESOURCES {
                 div.reschip style=(format!("--rc:{}", resource_color(r))) title=(r.name()) {
                     span.rc-glyphbox { (res_glyph(r)) }
@@ -399,12 +398,6 @@ fn status_frag(game: &GameState, _data: &RoomData, viewer: Option<PlayerId>) -> 
         }
         div.tb-right {
             button #audio-toggle type="button" title="Toggle sound" aria-label="Toggle sound" { "🔊" }
-            @if let Some(n) = dev {
-                span.tb-chip title="Your development cards" { (ic("dev")) (n) }
-            }
-            @if let Some(n) = vp {
-                span.tb-chip title="Your victory points" { (ic("trophy")) (n) }
-            }
         }
     }
 }
@@ -424,9 +417,10 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
             @let p = &game.players[pid];
             @let is_me = Some(pid) == viewer;
             @let is_turn = game.current == pid;
-            div.pcard.me[is_me].turn[is_turn] {
+            @let is_light = matches!(p.color, Color::White);
+            div.pcard.me[is_me].turn[is_turn].light[is_light] style=(format!("--pc:{}", color_hex(p.color))) {
                 div.phead {
-                    span.pvp style=(format!("--pc:{}", color_hex(p.color))) title="Victory points" { (ic("trophy")) (game.public_victory_points(pid)) }
+                    span.pvp title="Victory points" { (ic("trophy")) (game.public_victory_points(pid)) }
                     span.pname title=(p.name.as_str()) { (p.name) }
                 }
                 div.prow {
@@ -434,7 +428,7 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                     span.stat title="Development cards" { (ic("dev")) (p.all_dev_cards().count()) }
                     span.stat title="Knights played" { (ic("shield")) (p.played_knights) }
                     @if game.longest_road == Some(pid) { span.stat title="Longest Road" { (ic("road")) } }
-                    @if game.largest_army == Some(pid) { span.stat title="Largest Army" { (ic("shield")) } }
+                    @if game.largest_army == Some(pid) { span.stat title="Largest Army" { (ic("army")) } }
                 }
                 @if is_turn && data.turn_seconds > 0 && data.turn_deadline_ms > 0
                     && matches!(game.phase, Phase::Play) {
