@@ -135,7 +135,7 @@ fn head_common(title: &str) -> Markup {
     html! {
         head {
             meta charset="utf-8";
-            meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
+            meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no";
             meta name="theme-color" content="#1470a8";
             meta name="description" content="The classic game of Catan, now online to play with your friends.";
             meta property="og:title" content="Play Catanou";
@@ -151,7 +151,8 @@ fn head_common(title: &str) -> Markup {
             link rel="preload" as="font" type="font/woff2" href="/static/fonts/nunito-latin.woff2" crossorigin;
             link rel="stylesheet" href="/static/app.css";
             meta name="apple-mobile-web-app-capable" content="yes";
-            meta name="apple-mobile-web-app-title" content="Catanou";
+            meta name="mobile-web-app-capable" content="yes";
+            meta name="apple-mobile-web-app-title" content="Play Catanou";
             meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
             script src="/static/htmx.min.js" defer {}
             script src="/static/sse.js" defer {}
@@ -366,6 +367,10 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
         div #app hx-ext="sse" sse-connect=(format!("/room/{code}/events")) {
             div #toasts.toasts {}
             div #notif.notif {}
+            div.pwa-titlebar {
+                img src="/static/branding/logo-128.webp" alt="Play Catanou" width="20" height="20";
+                span { "Play Catanou" }
+            }
             div #status.topbar sse-swap="status" { (f.status) }
             div #players.pstrip sse-swap="players" { (f.players) }
             div #board.board sse-swap="board" { (f.board) }

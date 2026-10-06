@@ -1,7 +1,7 @@
 {
   "id": "/",
   "name": "Play Catanou",
-  "short_name": "Catanou",
+  "short_name": "Play Catanou",
   "description": "The classic game of Catan, now online to play with your friends.",
   "start_url": "/",
   "scope": "/",
