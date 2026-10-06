@@ -295,8 +295,10 @@ async fn action(
         match parse_action(&form, game, v, mode) {
             Ok(act) => match game.apply(v, &act) {
                 Ok(()) => {
-                    // Reset build mode after a successful placement.
-                    let keep = matches!(act, Action::PlaceRoad { .. })
+                    // Reset build mode after a successful placement, but keep
+                    // road placement active while free roads from a Road
+                    // Building card remain to be placed.
+                    let keep = matches!(act, Action::PlaceRoad { .. } | Action::BuildRoad { .. })
                         && game.free_roads_left > 0;
                     let reset_mode = matches!(
                         act,

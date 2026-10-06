@@ -52,6 +52,12 @@ footer.site a{color:#ffeaa7;font-weight:700;text-decoration:none}
 /* Game shell — fixed, no page scroll (colonist-style) */
 body.game{height:100dvh;overflow:hidden;background:linear-gradient(180deg,#1d7aae 0%,#0e5c8e 55%,#0a4a76 100%);color:#fff;display:flex;flex-direction:column}
 body.game #app{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;height:100%;padding-bottom:env(safe-area-inset-bottom)}
+/* Installed PWAs on Android draw the shell under the gesture navigation bar
+   without reporting a safe-area inset, which clips the hand strip and footer.
+   Reserve extra bottom room in standalone mode so nothing is cut off. */
+@media (display-mode:standalone){
+  body.game #app{padding-bottom:max(env(safe-area-inset-bottom,0px),26px)}
+}
 
 /* Top bar: menu + bank + your dev/VP */
 .topbar{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 8px 4px;flex-wrap:nowrap}
@@ -81,9 +87,10 @@ body.game #audio-toggle.off{opacity:.5}
 .pstrip .phead{display:flex;align-items:center;gap:5px;min-width:0}
 .pstrip .pvp{display:inline-flex;align-items:center;gap:2px;height:19px;padding:0 6px;border-radius:999px;font-size:11px;font-weight:900;color:#22303c;background:#fff;border:1.5px solid #0000002e;flex:0 0 auto}
 .pstrip .pvp .ic{width:12px;height:12px;color:#c9a227}
+.pstrip .pvp.revealed{background:#ffd84d;border-color:#00000045}
 .pstrip .pname{flex:1;font-size:12px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px #0004}
 .pstrip .pcard.light .pname{text-shadow:none}
-.pstrip .prow{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:inherit}
+.pstrip .prow{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px 6px;font-size:11px;font-weight:700;color:inherit}
 .pstrip .prow .stat{display:flex;align-items:center;gap:2px}
 .pstrip .prow .ic{width:13px;height:13px;opacity:.9}
 .pstrip .prow .glyph{width:12px;height:12px}
@@ -191,6 +198,7 @@ body.game #audio-toggle.off{opacity:.5}
 .build-opt:hover{background:#fffdf6}
 .build-opt:disabled{opacity:.45;cursor:not-allowed}
 .build-opt .bo-top{display:flex;align-items:center;gap:7px;font-weight:800;font-size:14px}
+.build-opt .cost-free{font-size:13px;font-weight:900;color:#1f8a4c}
 .build-opt .bo-top .ic{width:20px;height:20px;color:#11527d}
 .cost{display:inline-flex;align-items:center;gap:2px;font-size:14px;flex-wrap:wrap}
 .cost-item{display:inline-flex;align-items:center;gap:1px;margin-right:4px}
@@ -202,6 +210,8 @@ body.game #audio-toggle.off{opacity:.5}
 .devrow .dev-body{flex:1;min-width:0}
 .devrow .dev-name{font-weight:800;font-size:14px}
 .devrow .dev-desc{font-size:11px;color:#6c6154;line-height:1.25}
+.devrow .dev-note{margin-top:3px;font-size:10px;font-weight:800;color:#b23b2e}
+.devrow .dev-auto{align-self:center;flex:0 0 auto;background:#5b3fa0;color:#fff;border-radius:999px;font-size:11px;font-weight:900;padding:4px 10px}
 .devrow form{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px}
 .devrow select{background:#f0e7d2;color:#2b2118;border:1px solid #00000022;border-radius:8px;padding:6px;font:inherit}
 .devrow .dockbtn{width:44px;height:44px}
@@ -259,6 +269,6 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
  .tb-chip{padding:4px 5px;font-size:11px}
  .tb-chip .ic{width:14px;height:14px}
  .bank-ic .ic{width:17px;height:17px}
- .pstrip .prow{gap:4px;font-size:10px}
+ .pstrip .prow{gap:2px 4px;font-size:10px}
  .pstrip .pname{font-size:11px}
 }
