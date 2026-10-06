@@ -92,4 +92,26 @@
       show('Add to Home Screen: tap <b>Share</b> then <b>Add to Home Screen</b>', false);
     }, 2500);
   }
+
+  // Installed apps have no browser chrome, so the game shell can end up sized
+  // to a viewport that extends under the Android system bars. Flag standalone
+  // mode (shows the in-app title bar) and size the shell to the real visible
+  // viewport so the bottom hand strip and footer are never clipped.
+  if (isStandalone()) {
+    document.body.classList.add("pwa");
+  }
+  function syncAppHeight() {
+    var vv = window.visualViewport;
+    var h = window.innerHeight;
+    if (vv && vv.height) h = Math.min(h, vv.height);
+    if (h > 0) {
+      document.documentElement.style.setProperty("--app-h", h + "px");
+    }
+  }
+  window.addEventListener("resize", syncAppHeight);
+  window.addEventListener("orientationchange", syncAppHeight);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", syncAppHeight);
+  }
+  syncAppHeight();
 })();

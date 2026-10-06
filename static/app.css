@@ -50,14 +50,21 @@ footer.site a{color:#ffeaa7;font-weight:700;text-decoration:none}
 .glyph{width:1em;height:1em;display:block;object-fit:contain}
 
 /* Game shell — fixed, no page scroll (colonist-style) */
-body.game{height:100dvh;overflow:hidden;background:linear-gradient(180deg,#1d7aae 0%,#0e5c8e 55%,#0a4a76 100%);color:#fff;display:flex;flex-direction:column}
+body.game{--titlebar-h:0px;height:var(--app-h,100dvh);overflow:hidden;background:linear-gradient(180deg,#1d7aae 0%,#0e5c8e 55%,#0a4a76 100%);color:#fff;display:flex;flex-direction:column}
 body.game #app{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;height:100%;padding-bottom:env(safe-area-inset-bottom)}
-/* Installed PWAs on Android draw the shell under the gesture navigation bar
-   without reporting a safe-area inset, which clips the hand strip and footer.
-   Reserve extra bottom room in standalone mode so nothing is cut off. */
+
+/* PWA title bar: an installed app has no browser chrome, which leaves the
+   game shell extending under the system bars. Show a slim in-app bar (game
+   name only) plus the JS-measured viewport height above, so the shell fits the
+   visible area. Hidden in a normal browser tab. */
+.pwa-titlebar{display:none;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:calc(env(safe-area-inset-top,0px) + 2px) 10px 2px;background:#ffffff14;border-bottom:1px solid #ffffff1f;font-weight:800;font-size:15px;letter-spacing:.4px;color:#ffeaa7}
+.pwa-titlebar img{width:22px;height:22px;border-radius:6px;display:block}
 @media (display-mode:standalone){
-  body.game #app{padding-bottom:max(env(safe-area-inset-bottom,0px),26px)}
+  .pwa-titlebar{display:flex}
+  body.game{--titlebar-h:44px}
 }
+body.pwa .pwa-titlebar{display:flex}
+body.pwa{--titlebar-h:44px}
 
 /* Top bar: menu + bank + your dev/VP */
 .topbar{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 8px 4px;flex-wrap:nowrap}
@@ -114,7 +121,7 @@ body.game #audio-toggle.off{opacity:.5}
 .spot:hover{filter:brightness(1.4)}
 
 /* Floating controls pill */
-.ctl{position:fixed;left:50%;top:120px;transform:translateX(-50%);z-index:30;pointer-events:none;max-width:calc(100% - 24px)}
+.ctl{position:fixed;left:50%;top:calc(120px + var(--titlebar-h,0px));transform:translateX(-50%);z-index:30;pointer-events:none;max-width:calc(100% - 24px)}
 .ctl .pill{pointer-events:auto;display:inline-flex;align-items:center;gap:6px;background:#0b4d7ccc;color:#fff;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;box-shadow:0 4px 14px #0004;white-space:nowrap}
 .ctl .pill.win{background:#1f8a4ccc}
 .ctl .pill .ic{width:15px;height:15px}
@@ -256,7 +263,7 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
  .dock{padding:6px 18px 8px}
  .dockbtn{width:56px;height:56px;border-radius:16px}
  .handstrip{padding:8px 18px}
- .ctl{top:132px}
+ .ctl{top:calc(132px + var(--titlebar-h,0px))}
  .trades .trade-card{bottom:172px}
  .modal-card{padding-bottom:4px}
 }
