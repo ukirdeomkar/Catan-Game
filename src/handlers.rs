@@ -2,7 +2,7 @@ use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
 use crate::game::state::BotLevel;
 use crate::render;
-use crate::state::{AppState, JoinError, Room, ViewMode, now_ms};
+use crate::state::{AppState, JoinError, Layout, Room, ViewMode, now_ms};
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, header},
@@ -27,6 +27,7 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/events", get(events))
         .route("/room/{code}/action", post(action))
         .route("/room/{code}/mode", post(set_mode))
+        .route("/room/{code}/layout", post(set_layout))
         .route("/room/{code}/start", post(start))
         .route("/room/{code}/add_bot", post(add_bot))
         .route("/healthz", get(|| async { "ok" }))
@@ -506,6 +507,35 @@ async fn set_mode(
             return toast("Not a member.");
         };
         data.members[v].mode = mode;
+        data.members[v].last_seen_ms = now_ms();
+    }
+    room.bump();
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn set_layout(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return toast("Room not found.");
+    };
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return toast("Session expired.");
+    };
+    let layout = match form.get("layout").map(String::as_str) {
+        Some("classic") => Layout::Classic,
+        _ => Layout::Board,
+    };
+    {
+        let mut data = room.data.lock().unwrap();
+        let Some(v) = data.member_index(&token) else {
+            return toast("Not a member.");
+        };
+        data.members[v].layout = layout;
         data.members[v].last_seen_ms = now_ms();
     }
     room.bump();

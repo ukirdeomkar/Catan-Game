@@ -25,6 +25,16 @@ pub enum ViewMode {
     PlaceCity,
 }
 
+/// Per-viewer visual style. `Board` is the painted "offline board" revamp;
+/// `Classic` is the original flat colonist-style look. Chosen independently by
+/// each member and shared across every fragment they render.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Layout {
+    Board,
+    #[default]
+    Classic,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Member {
     pub token: String,
@@ -39,6 +49,8 @@ pub struct Member {
     pub last_seen_ms: u64,
     #[serde(default)]
     pub mode: ViewMode,
+    #[serde(default)]
+    pub layout: Layout,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -110,6 +122,7 @@ impl RoomData {
             connected: true,
             last_seen_ms: now_ms(),
             mode: ViewMode::Normal,
+            layout: Layout::default(),
         });
         true
     }
@@ -212,6 +225,7 @@ impl AppState {
                 connected: true,
                 last_seen_ms: now_ms(),
                 mode: ViewMode::Normal,
+            layout: Layout::default(),
             }],
             game: None,
             started: false,
@@ -269,6 +283,7 @@ impl AppState {
                     connected: true,
                     last_seen_ms: now_ms(),
                     mode: ViewMode::Normal,
+            layout: Layout::default(),
                 });
                 data.last_activity_ms = now_ms();
                 token

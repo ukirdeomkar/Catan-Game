@@ -50,7 +50,7 @@ footer.site a{color:#ffeaa7;font-weight:700;text-decoration:none}
 .glyph{width:1em;height:1em;display:block;object-fit:contain}
 
 /* Game shell — fixed, no page scroll (colonist-style) */
-body.game{--titlebar-h:0px;height:var(--app-h,100dvh);overflow:hidden;background:linear-gradient(180deg,#1d7aae 0%,#0e5c8e 55%,#0a4a76 100%);color:#fff;display:flex;flex-direction:column}
+body.game{--titlebar-h:0px;height:var(--app-h,100dvh);overflow:hidden;background:#0e5c8e url('/static/board/ocean.webp') center/cover no-repeat fixed;color:#fff;display:flex;flex-direction:column}
 body.game #app{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;height:100%;padding-bottom:env(safe-area-inset-bottom)}
 
 /* PWA title bar: an installed app has no browser chrome, which leaves the
@@ -78,6 +78,9 @@ body.pwa{--titlebar-h:44px}
 .reschip .rc-glyphbox .glyph{width:14px;height:14px}
 .reschip .rc-num{min-width:13px;text-align:center}
 .tb-right{display:flex;align-items:center;gap:5px;flex:0 0 auto}
+/* Round board-style toggle (theme-switch style). */
+.tb-btn.round{border-radius:999px;width:34px;height:34px}
+.tb-btn.round .ic{width:19px;height:19px}
 .tb-chip{display:flex;align-items:center;gap:4px;background:#ffffff1f;border-radius:9px;padding:5px 7px;font-weight:800;font-size:12px;color:#fff}
 .tb-chip .ic{width:15px;height:15px}
 .tb-chip .glyph{width:15px;height:15px}
@@ -180,6 +183,11 @@ body.game #audio-toggle.off{opacity:.5}
 .rcard .rcard-icon{font-size:24px;line-height:1;display:flex;background:#ffffff30;border-radius:999px;padding:3px}
 .rcard .rcard-icon .glyph{width:24px;height:24px}
 .rcard .rcard-name{font-size:9px;font-weight:700;opacity:.92}
+/* Board layout: resource card face uses the painted card art. */
+.rcard.art{background-image:var(--card,#3f6ba0);background-size:cover;background-position:center;border-color:#00000044;justify-content:flex-end}
+.rcard.art .rcard-icon{display:none}
+.rcard.art .rcard-name{position:absolute;left:0;right:0;bottom:0;padding:3px 0 4px;background:#00000073;border-radius:0 0 8px 8px;font-size:9px;letter-spacing:.2px}
+.rcard.art .rcard-count{top:2px;left:6px;color:#fff;text-shadow:0 1px 3px #000a,0 0 4px #000}
 .rcard.pick{cursor:pointer;opacity:.6;transition:opacity .15s,transform .1s}
 .rcard.pick.sel{opacity:1;box-shadow:0 0 0 2px #17603f,0 2px 6px #0004;transform:translateY(-3px)}
 .rcard.pick.disabled{opacity:.25;pointer-events:none}
@@ -214,6 +222,8 @@ body.game #audio-toggle.off{opacity:.5}
 .devrow{display:flex;align-items:center;gap:10px;background:#fff;border-radius:12px;padding:9px 11px;margin-bottom:8px;box-shadow:0 1px 3px #0002}
 .devrow .dev-ic{width:38px;height:38px;flex:0 0 auto;border-radius:10px;background:#5b3fa0;color:#fff;display:flex;align-items:center;justify-content:center}
 .devrow .dev-ic .ic{width:20px;height:20px}
+.devrow .dev-ic.art{background-image:var(--card);background-size:cover;background-position:center;background-color:transparent}
+.devrow .dev-ic.art .ic{display:none}
 .devrow .dev-body{flex:1;min-width:0}
 .devrow .dev-name{font-weight:800;font-size:14px}
 .devrow .dev-desc{font-size:11px;color:#6c6154;line-height:1.25}
@@ -256,16 +266,34 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
 
 @media(min-width:860px){
  .wrap{padding:16px}
- .pstrip{padding:0 14px 6px;justify-content:center}
- .pstrip .pcard{flex:0 1 320px;max-width:320px}
+ /* Desktop shell: board on the left, the player panel as a right-hand column,
+    so the board gets the full height. Mobile keeps the stacked flex layout. */
+ body.game #app{
+   display:grid;
+   /* Symmetric side columns keep the board centred in the viewport. */
+   grid-template-columns:250px minmax(0,1fr) 250px;
+   grid-template-rows:auto auto minmax(0,1fr) auto auto;
+ }
+ .pwa-titlebar{grid-column:1 / -1;grid-row:1}
+ #status{grid-column:1 / -1;grid-row:2}
+ #board{grid-column:2;grid-row:3;min-height:0}
+ #players{grid-column:3;grid-row:3;flex-direction:column;gap:6px;padding:0 2px 0 10px;overflow-y:auto;overflow-x:hidden;justify-content:flex-start}
+ #players .pcard{flex:0 0 auto;width:100%;max-width:none;padding:6px 8px}
+ #trades{display:contents}
+ #turn{grid-column:1 / -1;grid-row:4}
+ #hand{grid-column:1 / -1;grid-row:5}
  .bank{gap:6px}
  .reschip{font-size:14px;padding:4px 9px 4px 6px}
- .dock{padding:6px 18px 8px}
- .dockbtn{width:56px;height:56px;border-radius:16px}
- .handstrip{padding:8px 18px}
+ .dock{padding:2px 18px 4px}
+ .dockbtn{width:48px;height:48px;border-radius:14px}
+ .handstrip{padding:4px 18px}
+ .handstrip .rcard{width:50px;height:60px}
  .ctl{top:calc(132px + var(--titlebar-h,0px))}
  .trades .trade-card{bottom:172px}
  .modal-card{padding-bottom:4px}
+ .topbar{padding:4px 8px 2px}
+ .board{padding:0}
+ .gamefoot{display:none}
 }
 @media(max-width:860px){body:not(.game) .wrap{padding:10px}}
 @media(max-width:430px){

@@ -4,23 +4,12 @@ use crate::game::resources::{
     ResourceHand,
 };
 use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerId, TradeResponse};
-use crate::state::{RoomData, ViewMode};
+use crate::state::{Layout, RoomData, ViewMode};
 use maud::{DOCTYPE, Markup, html};
 
 // ---------------------------------------------------------------------------
 // Palette
 // ---------------------------------------------------------------------------
-
-fn terrain_fill(t: Terrain) -> &'static str {
-    match t {
-        Terrain::Wood => "#3f8f4f",
-        Terrain::Brick => "#bd5a30",
-        Terrain::Wheat => "#d9a72c",
-        Terrain::Ore => "#7d8794",
-        Terrain::Sheep => "#8dc35a",
-        Terrain::Desert => "#e6d3a3",
-    }
-}
 
 fn color_hex(c: Color) -> &'static str {
     match c {
@@ -74,6 +63,7 @@ fn ic(name: &str) -> Markup {
         "swap" => r#"<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>"#,
         "trash" => r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>"#,
         "person" => r#"<circle cx="12" cy="8" r="4.4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>"#,
+        "palette" => r#"<circle cx="13.5" cy="6.5" r=".6" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".6" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".6" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>"#,
         "angry" => r#"<circle cx="12" cy="12" r="9.5"/><path d="M16 16s-1.5-2-4-2-4 2-4 2"/><path d="M7.5 8 10 9"/><path d="m14 9 2.5-1"/><path d="M9 10h.01"/><path d="M15 10h.01"/>"#,
         _ => "",
     };
@@ -109,9 +99,33 @@ fn res_image(r: Resource, x: f64, y: f64, size: f64) -> Markup {
     }
 }
 
-/// Board terrain art. Resource tiles use the vendored icons; the desert keeps a
-/// small hand-drawn cactus (no icon was supplied for it).
-fn board_terrain(t: Terrain, cx: f64, cy: f64) -> Markup {
+/// Painted tile art per terrain (see `static/art/PROVENANCE.md`). Full-bleed
+/// square art, cropped to the hexagon at render time.
+fn terrain_tile(t: Terrain) -> &'static str {
+    match t {
+        Terrain::Wood => "/static/board/tile-wood.webp",
+        Terrain::Brick => "/static/board/tile-brick.webp",
+        Terrain::Wheat => "/static/board/tile-wheat.webp",
+        Terrain::Ore => "/static/board/tile-ore.webp",
+        Terrain::Sheep => "/static/board/tile-sheep.webp",
+        Terrain::Desert => "/static/board/tile-desert.webp",
+    }
+}
+
+/// Classic flat terrain colour (the pre-revamp look).
+fn terrain_fill(t: Terrain) -> &'static str {
+    match t {
+        Terrain::Wood => "#3f8f4f",
+        Terrain::Brick => "#bd5a30",
+        Terrain::Wheat => "#d9a72c",
+        Terrain::Ore => "#7d8794",
+        Terrain::Sheep => "#8dc35a",
+        Terrain::Desert => "#e6d3a3",
+    }
+}
+
+/// Classic tile glyph: one vendored resource icon (desert keeps a small cactus).
+fn flat_tile_icon(t: Terrain, cx: f64, cy: f64) -> Markup {
     match t.resource() {
         Some(r) => res_image(r, cx - 0.36, cy - 0.36, 0.72),
         None => maud::PreEscaped(format!(
@@ -120,8 +134,75 @@ fn board_terrain(t: Terrain, cx: f64, cy: f64) -> Markup {
     }
 }
 
-/// The robber: a dark token with a white figure, drawn on the board.
-fn board_robber(cx: f64, cy: f64) -> Markup {
+/// Painted card art per resource.
+fn res_card_art(r: Resource) -> &'static str {
+    match r {
+        Resource::Wood => "/static/cards/resource-wood.webp",
+        Resource::Brick => "/static/cards/resource-brick.webp",
+        Resource::Wheat => "/static/cards/resource-wheat.webp",
+        Resource::Ore => "/static/cards/resource-ore.webp",
+        Resource::Sheep => "/static/cards/resource-sheep.webp",
+    }
+}
+
+/// Painted art per development card.
+fn dev_card_art(c: DevCard) -> &'static str {
+    match c {
+        DevCard::Knight => "/static/cards/dev-knight.webp",
+        DevCard::Monopoly => "/static/cards/dev-monopoly.webp",
+        DevCard::RoadBuilding => "/static/cards/dev-roadbuilding.webp",
+        DevCard::YearOfPlenty => "/static/cards/dev-yearofplenty.webp",
+        DevCard::VictoryPoint => "/static/cards/dev-victorypoint.webp",
+    }
+}
+
+/// CSS vars for a resource card: accent colour, plus card art on the board layout.
+fn res_card_style(r: Resource, layout: Layout) -> String {
+    if layout == Layout::Board {
+        format!("--rc:{};--card:url({})", resource_color(r), res_card_art(r))
+    } else {
+        format!("--rc:{}", resource_color(r))
+    }
+}
+
+// Hand-authored piece art, embedded at build time so it can be inlined and
+// tinted via `currentColor` (an external <image> cannot inherit it).
+const SETTLEMENT_SVG: &str = include_str!("../static/art/settlement.svg");
+const CITY_SVG: &str = include_str!("../static/art/city.svg");
+const ROAD_SVG: &str = include_str!("../static/art/road.svg");
+const ROBBER_SVG: &str = include_str!("../static/art/robber.svg");
+
+/// Inner markup of an embedded piece SVG, without its outer `<svg>` wrapper.
+fn svg_inner(src: &'static str) -> &'static str {
+    let start = src.find('>').map(|i| i + 1).unwrap_or(0);
+    let end = src.rfind("</svg>").unwrap_or(src.len());
+    &src[start..end]
+}
+
+/// Place a 100x100 piece SVG at `(cx,cy)`, scaled (100 units = `1/scale`) and
+/// tinted to `color` (picked up by `currentColor` inside the art).
+fn piece(src: &'static str, cx: f64, cy: f64, scale: f64, color: &str) -> Markup {
+    maud::PreEscaped(format!(
+        r##"<g transform="translate({cx:.3} {cy:.3}) scale({scale:.4}) translate(-50 -50)" color="{color}" fill="none">{}</g>"##,
+        svg_inner(src)
+    ))
+}
+
+/// Place a road plank along the edge (ax,ay)-(bx,by), tinted to `color`.
+fn road_piece(ax: f64, ay: f64, bx: f64, by: f64, color: &str) -> Markup {
+    let (mx, my) = ((ax + bx) / 2.0, (ay + by) / 2.0);
+    let deg = (by - ay).atan2(bx - ax).to_degrees();
+    maud::PreEscaped(format!(
+        r##"<g transform="translate({mx:.3} {my:.3}) rotate({deg:.2}) scale(0.0112 0.0052) translate(-50 -50)" color="{color}" fill="none">{}</g>"##,
+        svg_inner(ROAD_SVG)
+    ))
+}
+
+/// The robber: painted token art on the board, or the classic drawn token.
+fn board_robber(cx: f64, cy: f64, board: bool) -> Markup {
+    if board {
+        return piece(ROBBER_SVG, cx, cy, 0.0075, "#2b2b30");
+    }
     maud::PreEscaped(format!(
         r##"<circle cx="{cx:.3}" cy="{cy:.3}" r="0.21" fill="#2b2b30" stroke="#c79a4e" stroke-width="0.03"/><g transform="translate({cx:.3} {cy:.3}) scale(0.0135) translate(-12 -12)"><path d="M12 3c-3.6 0-6.2 2.8-6.2 6.6 0 3 1.6 5.3 3.9 6.4L9 21.5h6l-.7-5.5c2.3-1.1 3.9-3.4 3.9-6.4C18.2 5.8 15.6 3 12 3z" fill="#d7cfbf"/><ellipse cx="12" cy="9.6" rx="3.1" ry="3.5" fill="#141316"/></g>"##
     ))
@@ -348,16 +429,24 @@ pub struct Fragments {
 }
 
 pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Fragments {
+    let layout = viewer.map(|v| member_layout(data, v)).unwrap_or_default();
     Fragments {
         status: status_frag(game, data, viewer),
         board: board_frag(game, data, viewer),
         players: players_frag(game, data, viewer),
-        hand: viewer.map(|v| hand_frag(game, &data.code, v)).unwrap_or_default(),
+        hand: viewer
+            .map(|v| hand_frag(game, &data.code, v, layout))
+            .unwrap_or_default(),
         controls: controls_frag(game, data, viewer),
         trades: trades_frag(game, &data.code, viewer),
         log: log_frag(game),
         turn: turn_frag(game, data, viewer),
     }
+}
+
+/// The visual layout a viewer has chosen (defaults to the painted board).
+fn member_layout(data: &RoomData, v: PlayerId) -> Layout {
+    data.members.get(v).map(|m| m.layout).unwrap_or_default()
 }
 
 pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
@@ -394,7 +483,11 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
 // Top bar: menu + bank + your dev/VP
 // ---------------------------------------------------------------------------
 
-fn status_frag(game: &GameState, _data: &RoomData, _viewer: Option<PlayerId>) -> Markup {
+fn status_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
+    let layout = viewer.map(|v| member_layout(data, v)).unwrap_or_default();
+    let next = if layout == Layout::Board { "classic" } else { "board" };
+    let layout_url = format!("/room/{}/layout", data.code);
+    let next_vals = format!(r#"{{"layout":"{next}"}}"#);
     html! {
         button.tb-btn type="button" data-sheet-open="menu" title="Menu & info" aria-label="Menu" { (ic("menu")) }
         div.bank title="Resources left in the bank" {
@@ -407,6 +500,8 @@ fn status_frag(game: &GameState, _data: &RoomData, _viewer: Option<PlayerId>) ->
             }
         }
         div.tb-right {
+            button.tb-btn.round type="button" title="Switch board style" aria-label="Switch board style"
+                hx-post=(layout_url) hx-vals=(next_vals) { (ic("palette")) }
             button #audio-toggle type="button" title="Toggle sound" aria-label="Toggle sound" { "🔊" }
         }
     }
@@ -483,15 +578,20 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
 // Hand strip
 // ---------------------------------------------------------------------------
 
-fn hand_frag(game: &GameState, _code: &str, v: PlayerId) -> Markup {
+fn hand_frag(game: &GameState, _code: &str, v: PlayerId, layout: Layout) -> Markup {
     let p = &game.players[v];
     let dev_total = p.all_dev_cards().count();
+    let board = layout == Layout::Board;
     html! {
         @for r in ALL_RESOURCES {
             @let n = p.resources.get(r);
-            div.rcard.zero[n == 0] data-res=(r.slug()) style=(format!("--rc:{}", resource_color(r))) title=(r.name()) {
+            div.rcard.zero[n == 0].art[board] data-res=(r.slug()) style=(res_card_style(r, layout)) title=(r.name()) {
                 span.rcard-count { (n) }
-                span.rcard-icon { (res_glyph(r)) }
+                @if board {
+                    span.rcard-name { (r.name()) }
+                } @else {
+                    span.rcard-icon { (res_glyph(r)) }
+                }
             }
         }
         @if dev_total > 0 {
@@ -568,6 +668,7 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
     let url = format!("/room/{}/action", data.code);
     let mode_url = format!("/room/{}/mode", data.code);
     let mode = data.members.get(v).map(|m| m.mode).unwrap_or_default();
+    let layout = member_layout(data, v);
     let p = &game.players[v];
     let my = game.current == v;
     let my_play = my && matches!(game.phase, Phase::Play);
@@ -618,7 +719,7 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
         @if need_discard {
             div.sheet data-sheet="discard" data-auto {
                 div.sheet-head { h3 { "Discard" } }
-                (discard_form(game, &data.code, v))
+                (discard_form(game, &data.code, v, layout))
             }
         }
     }
@@ -706,6 +807,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
     let p = &game.players[v];
     let url = format!("/room/{}/action", data.code);
     let has = |c: DevCard| p.dev_cards.contains(&c);
+    let board = member_layout(data, v) == Layout::Board;
     html! {
         div.sheet data-sheet="dev" hidden {
             div.sheet-head {
@@ -715,7 +817,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
             }
             @if has(DevCard::Knight) {
                 div.devrow {
-                    div.dev-ic { (ic("shield")) }
+                    div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::Knight))) { (ic("shield")) }
                     div.dev-body {
                         div.dev-name { "Knight" }
                         div.dev-desc { (DevCard::Knight.description()) }
@@ -726,7 +828,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
             @if has(DevCard::RoadBuilding) {
                 @let road_ok = p.roads_left > 0 && !game.legal_road_edges(v).is_empty();
                 div.devrow {
-                    div.dev-ic { (ic("road")) }
+                    div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::RoadBuilding))) { (ic("road")) }
                     div.dev-body {
                         div.dev-name { "Road Building" }
                         div.dev-desc { (DevCard::RoadBuilding.description()) }
@@ -739,7 +841,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
             }
             @if has(DevCard::YearOfPlenty) {
                 div.devrow {
-                    div.dev-ic { (ic("offer")) }
+                    div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::YearOfPlenty))) { (ic("offer")) }
                     div.dev-body {
                         div.dev-name { "Year of Plenty" }
                         div.dev-desc { (DevCard::YearOfPlenty.description()) }
@@ -758,7 +860,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
             }
             @if has(DevCard::Monopoly) {
                 div.devrow {
-                    div.dev-ic { (ic("trophy")) }
+                    div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::Monopoly))) { (ic("trophy")) }
                     div.dev-body {
                         div.dev-name { "Monopoly" }
                         div.dev-desc { (DevCard::Monopoly.description()) }
@@ -779,7 +881,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                 .count();
             @if vp_playable > 0 {
                 div.devrow {
-                    div.dev-ic { (ic("trophy")) }
+                    div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::VictoryPoint))) { (ic("trophy")) }
                     div.dev-body {
                         div.dev-name {
                             "Victory Point"
@@ -867,6 +969,7 @@ fn menu_sheet(code: &str, data: &RoomData, game: &GameState, _viewer: Option<Pla
 fn trade_modal(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
     let url = format!("/room/{}/action", data.code);
     let p = &game.players[v];
+    let layout = member_layout(data, v);
     html! {
         div #trade-modal.modal hidden {
             div.modal-card {
@@ -877,9 +980,9 @@ fn trade_modal(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
                 }
                 p.muted.small { "Tap cards to build your offer. Shared with everyone — first to accept trades. Ends in 30s or when all decline." }
                 strong { "You give" }
-                div.picker { (pick_cards("give", Some(&p.resources))) }
+                div.picker { (pick_cards("give", Some(&p.resources), layout)) }
                 strong { "You want" }
-                div.picker { (pick_cards("want", None)) }
+                div.picker { (pick_cards("want", None, layout)) }
                 p.muted.small style="margin:-8px 0 10px" {
                     "Tap a card to add it; tap it 5 times to cycle back to 0."
                 }
@@ -906,10 +1009,11 @@ fn trade_modal(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
     }
 }
 
-fn discard_form(game: &GameState, code: &str, v: PlayerId) -> Markup {
+fn discard_form(game: &GameState, code: &str, v: PlayerId, layout: Layout) -> Markup {
     let p = &game.players[v];
     let total = p.resources.total();
     let need = total / 2;
+    let board = layout == Layout::Board;
     html! {
         p { "A 7 was rolled and you hold " b { (total) } " cards — discard " b { (need) } " down to half. Tap cards to choose." }
         form #discard-form data-need=(need) hx-post=(format!("/room/{code}/action")) {
@@ -917,11 +1021,11 @@ fn discard_form(game: &GameState, code: &str, v: PlayerId) -> Markup {
             div.picker {
                 @for r in ALL_RESOURCES {
                     @let have = p.resources.get(r);
-                    button.rcard.pick.disabled[have == 0] type="button" data-res=(r.slug())
+                    button.rcard.pick.disabled[have == 0].art[board] type="button" data-res=(r.slug())
                         data-group="discard" data-max=(have) title=(r.name())
-                        style=(format!("--rc:{}", resource_color(r))) {
+                        style=(res_card_style(r, layout)) {
                         span.pick-count data-count="0" { "0" }
-                        span.rcard-icon { (res_glyph(r)) }
+                        @if !board { span.rcard-icon { (res_glyph(r)) } }
                         span.rcard-name { (r.name()) }
                     }
                 }
@@ -937,15 +1041,16 @@ fn discard_form(game: &GameState, code: &str, v: PlayerId) -> Markup {
     }
 }
 
-fn pick_cards(group: &str, max: Option<&ResourceHand>) -> Markup {
+fn pick_cards(group: &str, max: Option<&ResourceHand>, layout: Layout) -> Markup {
+    let board = layout == Layout::Board;
     html! {
         @for r in ALL_RESOURCES {
             @let cap = max.map(|h| h.get(r));
             @let none_left = cap == Some(0);
-            button.rcard.pick.disabled[none_left] type="button" data-res=(r.slug()) data-group=(group)
-                data-max=[cap] title=(r.name()) style=(format!("--rc:{}", resource_color(r))) {
+            button.rcard.pick.disabled[none_left].art[board] type="button" data-res=(r.slug()) data-group=(group)
+                data-max=[cap] title=(r.name()) style=(res_card_style(r, layout)) {
                 span.pick-count data-count="0" { "0" }
-                span.rcard-icon { (res_glyph(r)) }
+                @if !board { span.rcard-icon { (res_glyph(r)) } }
                 span.rcard-name { (r.name()) }
             }
         }
@@ -1061,26 +1166,63 @@ fn board_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Ma
     }
 
     let action_url = format!("/room/{}/action", data.code);
+    let layout = viewer
+        .and_then(|v| data.members.get(v))
+        .map(|m| m.layout)
+        .unwrap_or_default();
+    // Inset hexagon shared by every tile: the terrain art is clipped to it so the
+    // sandy base shows through as a thin light-brown border inside each hex.
+    let hex_clip = hex_points_at(0.0, 0.0, 0.94);
 
     html! {
         svg viewBox=(format!("{:.2} {:.2} {:.2} {:.2}", minx, miny, w, h))
             preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" {
-            // Hexes
+            defs {
+                clipPath #hexClip { polygon points=(hex_clip) {} }
+                // Seamless sandy base - the light-brown border between tiles.
+                pattern #sand patternUnits="userSpaceOnUse" width="3" height="3" {
+                    image href="/static/board/beach.webp" x="0" y="0" width="3" height="3" preserveAspectRatio="xMidYMid slice" {}
+                }
+            }
+            // Sandy beach ring around the island's outer coast (board look only;
+            // drawn first so the tiles cover the inner half of each stroke).
+            @if layout == Layout::Board {
+                @for e in &board.edges {
+                    @if e.hexes.len() == 1 {
+                        @let (ax, ay) = (board.vertices[e.a].x, board.vertices[e.a].y);
+                        @let (bx, by) = (board.vertices[e.b].x, board.vertices[e.b].y);
+                        line x1=(format!("{ax:.3}")) y1=(format!("{ay:.3}")) x2=(format!("{bx:.3}")) y2=(format!("{by:.3}"))
+                            stroke="url(#sand)" stroke-width="0.22" stroke-linecap="round" {}
+                    }
+                }
+            }
             @for hex in &board.hexes {
-                @let pts = hex_points(hex);
-                polygon points=(pts) fill=(terrain_fill(hex.terrain)) stroke="#3e444b" stroke-width="0.055" {}
-                (board_terrain(hex.terrain, hex.cx, hex.cy - 0.45))
+                @if layout == Layout::Board {
+                    // Painted tile: a sandy base, then the tile image clipped to an
+                    // inset hexagon so the sand is the light-brown border.
+                    polygon points=(hex_points(hex)) fill="url(#sand)" stroke="#4b5058" stroke-opacity="0.7" stroke-width="0.03" {}
+                    g transform=(format!("translate({:.3} {:.3})", hex.cx, hex.cy)) {
+                        image href=(terrain_tile(hex.terrain)) x="-1" y="-1" width="2" height="2"
+                            preserveAspectRatio="xMidYMid slice" clip-path="url(#hexClip)" {}
+                        // Lift the painted art so pieces, roads and tokens read clearly.
+                        rect x="-1" y="-1" width="2" height="2" fill="#ffffff" fill-opacity="0.2" clip-path="url(#hexClip)" {}
+                    }
+                } @else {
+                    // Classic flat colour tile with a single resource glyph.
+                    polygon points=(hex_points(hex)) fill=(terrain_fill(hex.terrain)) stroke="#3e444b" stroke-width="0.055" {}
+                    (flat_tile_icon(hex.terrain, hex.cx, hex.cy - 0.45))
+                }
                 @if let Some(n) = hex.number {
                     circle cx=(format!("{:.3}", hex.cx)) cy=(format!("{:.3}", hex.cy + 0.05)) r="0.27" fill="#f4efe3" stroke="#b9ab8d" stroke-width="0.02" {}
-                    text x=(format!("{:.3}", hex.cx)) y=(format!("{:.3}", hex.cy + 0.09))
-                        text-anchor="middle" font-size="0.34" font-weight="800"
+                    text x=(format!("{:.3}", hex.cx)) y=(format!("{:.3}", hex.cy + 0.075))
+                        text-anchor="middle" font-size="0.27" font-weight="800"
                         fill=(if n == 6 || n == 8 { "#c0392b" } else { "#2b2b2b" }) { (n) }
                     @let pips = 6 - (n as i32 - 7).abs();
                     @let start = -(pips as f64 - 1.0) / 2.0;
                     @let pip_fill = if n == 6 || n == 8 { "#c0392b" } else { "#6b5a3a" };
                     @for i in 0..pips {
-                        circle cx=(format!("{:.3}", hex.cx + (start + i as f64) * 0.058)) cy=(format!("{:.3}", hex.cy + 0.245))
-                            r="0.026" fill=(pip_fill) {}
+                        circle cx=(format!("{:.3}", hex.cx + (start + i as f64) * 0.052)) cy=(format!("{:.3}", hex.cy + 0.2))
+                            r="0.024" fill=(pip_fill) {}
                     }
                 }
             }
@@ -1093,35 +1235,53 @@ fn board_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Ma
             // Robber
             @if robber_placed(board, game) {
                 @let rh = &board.hexes[game.robber_hex];
-                (board_robber(rh.cx + 0.5, rh.cy + 0.46))
+                (board_robber(rh.cx + 0.5, rh.cy + 0.46, layout == Layout::Board))
             }
 
-            // Roads: a dark casing first, then every coloured fill on top, so a
-            // road stays legible over any hex colour and against its neighbours.
-            @for e in &board.edges {
-                @if e.owner.is_some() {
-                    @let (ax, ay) = (board.vertices[e.a].x, board.vertices[e.a].y);
-                    @let (bx, by) = (board.vertices[e.b].x, board.vertices[e.b].y);
-                    line x1=(format!("{ax:.3}")) y1=(format!("{ay:.3}")) x2=(format!("{bx:.3}")) y2=(format!("{by:.3}"))
-                        stroke="#2b2f35" stroke-width="0.175" stroke-linecap="round" {}
+            // Roads: painted planks (board look), or the classic casing + fill.
+            @if layout == Layout::Board {
+                @for e in &board.edges {
+                    @if let Some(owner) = e.owner {
+                        @let (ax, ay) = (board.vertices[e.a].x, board.vertices[e.a].y);
+                        @let (bx, by) = (board.vertices[e.b].x, board.vertices[e.b].y);
+                        (road_piece(ax, ay, bx, by, color_hex(game.players[owner].color)))
+                    }
                 }
-            }
-            @for e in &board.edges {
-                @if let Some(owner) = e.owner {
-                    @let (ax, ay) = (board.vertices[e.a].x, board.vertices[e.a].y);
-                    @let (bx, by) = (board.vertices[e.b].x, board.vertices[e.b].y);
-                    line x1=(format!("{ax:.3}")) y1=(format!("{ay:.3}")) x2=(format!("{bx:.3}")) y2=(format!("{by:.3}"))
-                        stroke=(color_hex(game.players[owner].color)) stroke-width="0.105" stroke-linecap="round" {}
+            } @else {
+                @for e in &board.edges {
+                    @if e.owner.is_some() {
+                        @let (ax, ay) = (board.vertices[e.a].x, board.vertices[e.a].y);
+                        @let (bx, by) = (board.vertices[e.b].x, board.vertices[e.b].y);
+                        line x1=(format!("{ax:.3}")) y1=(format!("{ay:.3}")) x2=(format!("{bx:.3}")) y2=(format!("{by:.3}"))
+                            stroke="#2b2f35" stroke-width="0.175" stroke-linecap="round" {}
+                    }
+                }
+                @for e in &board.edges {
+                    @if let Some(owner) = e.owner {
+                        @let (ax, ay) = (board.vertices[e.a].x, board.vertices[e.a].y);
+                        @let (bx, by) = (board.vertices[e.b].x, board.vertices[e.b].y);
+                        line x1=(format!("{ax:.3}")) y1=(format!("{ay:.3}")) x2=(format!("{bx:.3}")) y2=(format!("{by:.3}"))
+                            stroke=(color_hex(game.players[owner].color)) stroke-width="0.105" stroke-linecap="round" {}
+                    }
                 }
             }
 
-            // Buildings
+            // Buildings: painted pieces (board look) or the classic flat polygons.
             @for v in &board.vertices {
                 @if let (Some(owner), b) = (v.owner, v.building) {
+                    @let col = color_hex(game.players[owner].color);
                     @if b == Building::Settlement {
-                        polygon points=(house_points(v.x, v.y, 0.17)) fill=(color_hex(game.players[owner].color)) stroke="#2b2f35" stroke-width="0.035" {}
+                        @if layout == Layout::Board {
+                            (piece(SETTLEMENT_SVG, v.x, v.y, 0.0062, col))
+                        } @else {
+                            polygon points=(house_points(v.x, v.y, 0.17)) fill=(col) stroke="#2b2f35" stroke-width="0.035" {}
+                        }
                     } @else if b == Building::City {
-                        polygon points=(house_points(v.x, v.y, 0.25)) fill=(color_hex(game.players[owner].color)) stroke="#2b2f35" stroke-width="0.05" {}
+                        @if layout == Layout::Board {
+                            (piece(CITY_SVG, v.x, v.y, 0.009, col))
+                        } @else {
+                            polygon points=(house_points(v.x, v.y, 0.25)) fill=(col) stroke="#2b2f35" stroke-width="0.05" {}
+                        }
                     }
                 }
             }
@@ -1210,11 +1370,16 @@ fn bounds(board: &Board) -> (f64, f64, f64, f64) {
 }
 
 fn hex_points(hex: &crate::game::board::Hex) -> String {
+    hex_points_at(hex.cx, hex.cy, 1.0)
+}
+
+/// Pointy-top hexagon outline (6 `x,y` pairs) centred on `(cx,cy)` with circumradius `r`.
+fn hex_points_at(cx: f64, cy: f64, r: f64) -> String {
     let mut pts = String::new();
     for i in 0..6 {
         let ang = (60.0 * i as f64 - 30.0f64).to_radians();
-        let x = hex.cx + ang.cos();
-        let y = hex.cy + ang.sin();
+        let x = cx + r * ang.cos();
+        let y = cy + r * ang.sin();
         if i > 0 {
             pts.push(' ');
         }
@@ -1257,48 +1422,51 @@ fn port_ratio(kind: PortKind) -> &'static str {
     if kind.resource().is_some() { "2:1" } else { "3:1" }
 }
 
+/// The little boat marker (painted art), shared by both board styles. The sail is
+/// intentionally large so the harbour's ratio/resource can be drawn on it.
 fn port_boat(x: f64, y: f64) -> Markup {
     maud::PreEscaped(format!(
-        r##"<g transform="translate({x:.3} {y:.3})"><path d="M-0.30 0.10 L0.30 0.10 L0.19 0.24 L-0.19 0.24 Z" fill="#c79a4e" stroke="#2b2f35" stroke-width="0.02"/><path d="M0 -0.32 L0 0.05 L0.26 0.05 Z" fill="#f4efe3" stroke="#2b2f35" stroke-width="0.015"/><line x1="0" y1="-0.32" x2="0" y2="0.10" stroke="#2b2f35" stroke-width="0.018"/></g>"##
+        r##"<image href="/static/art/port-boat.webp" x="{:.3}" y="{:.3}" width="0.98" height="0.98" preserveAspectRatio="xMidYMid meet"/>"##,
+        x - 0.49,
+        y - 0.49
     ))
 }
 
-/// One harbour: a jetty from the coast, a mooring line, a ratio badge and a boat.
+/// A straight jetty plank, rotated along the harbour's outward axis.
+fn port_bridge(cx: f64, cy: f64, deg: f64, w: f64, h: f64) -> Markup {
+    maud::PreEscaped(format!(
+        r##"<g transform="translate({cx:.3} {cy:.3}) rotate({deg:.1})"><image href="/static/art/port-bridge.webp" x="{:.3}" y="{:.3}" width="{w:.3}" height="{h:.3}" preserveAspectRatio="xMidYMid slice"/></g>"##,
+        -w / 2.0,
+        -h / 2.0
+    ))
+}
+
+/// One harbour: two small jetty legs (one per coastal vertex) and a boat at the
+/// end of each, with the exchange ratio (and resource) drawn on the sails.
 fn port_mark_svg(p: &PortMark) -> Markup {
-    let sand = "#caa15a";
     let ratio = port_ratio(p.kind);
-    let fill = "#f5efdf";
     let ink = "#2b2f35";
-    let j = 0.5;
-    let ax2 = p.ax + p.ux * j;
-    let ay2 = p.ay + p.uy * j;
-    let bx2 = p.bx + p.ux * j;
-    let by2 = p.by + p.uy * j;
-    let mx2 = (ax2 + bx2) / 2.0;
-    let my2 = (ay2 + by2) / 2.0;
-    let (w, h) = (0.82_f64, 0.42_f64);
-    let rx = p.badge_x - w / 2.0;
-    let ry = p.badge_y - h / 2.0;
+    let deg = p.uy.atan2(p.ux).to_degrees();
+    let leg = 0.5_f64;
+    let boat_d = leg + 0.3;
+    let (acx, acy) = (p.ax + p.ux * leg / 2.0, p.ay + p.uy * leg / 2.0);
+    let (bcx, bcy) = (p.bx + p.ux * leg / 2.0, p.by + p.uy * leg / 2.0);
+    let (ax, ay) = (p.ax + p.ux * boat_d, p.ay + p.uy * boat_d);
+    let (bx, by) = (p.bx + p.ux * boat_d, p.by + p.uy * boat_d);
     html! {
-        line x1=(format!("{:.3}", p.ax)) y1=(format!("{:.3}", p.ay)) x2=(format!("{ax2:.3}")) y2=(format!("{ay2:.3}"))
-            stroke=(sand) stroke-width="0.05" stroke-linecap="round" {}
-        line x1=(format!("{:.3}", p.bx)) y1=(format!("{:.3}", p.by)) x2=(format!("{bx2:.3}")) y2=(format!("{by2:.3}"))
-            stroke=(sand) stroke-width="0.05" stroke-linecap="round" {}
-        line x1=(format!("{ax2:.3}")) y1=(format!("{ay2:.3}")) x2=(format!("{bx2:.3}")) y2=(format!("{by2:.3}"))
-            stroke=(sand) stroke-width="0.05" stroke-linecap="round" {}
-        line x1=(format!("{:.3}", p.badge_x)) y1=(format!("{:.3}", p.badge_y)) x2=(format!("{mx2:.3}")) y2=(format!("{my2:.3}"))
-            stroke=(sand) stroke-width="0.03" stroke-dasharray="0.07 0.05" {}
-        rect x=(format!("{rx:.3}")) y=(format!("{ry:.3}")) width=(format!("{w:.3}")) height=(format!("{h:.3}")) rx=(format!("{:.3}", h / 2.0))
-            fill=(fill) stroke="#2b2f35" stroke-width="0.03" {}
+        (port_bridge(acx, acy, deg, leg, 0.16))
+        (port_bridge(bcx, bcy, deg, leg, 0.16))
+        (port_boat(ax, ay))
+        (port_boat(bx, by))
         @if let Some(r) = p.kind.resource() {
-            (res_image(r, p.badge_x - 0.34, p.badge_y - 0.16, 0.32))
-            text x=(format!("{:.3}", p.badge_x + 0.14)) y=(format!("{:.3}", p.badge_y + 0.10))
-                text-anchor="middle" font-size="0.2" font-weight="700" fill=(ink) { (ratio) }
+            (res_image(r, ax - 0.13, ay - 0.4, 0.26))
+            (res_image(r, bx - 0.13, by - 0.4, 0.26))
+            text x=(format!("{ax:.3}")) y=(format!("{:.3}", ay + 0.05)) text-anchor="middle" font-size="0.18" font-weight="800" fill=(ink) { (ratio) }
+            text x=(format!("{bx:.3}")) y=(format!("{:.3}", by + 0.05)) text-anchor="middle" font-size="0.18" font-weight="800" fill=(ink) { (ratio) }
         } @else {
-            text x=(format!("{:.3}", p.badge_x)) y=(format!("{:.3}", p.badge_y + 0.10))
-                text-anchor="middle" font-size="0.22" font-weight="700" fill=(ink) { (ratio) }
+            text x=(format!("{ax:.3}")) y=(format!("{:.3}", ay - 0.01)) text-anchor="middle" font-size="0.22" font-weight="800" fill=(ink) { (ratio) }
+            text x=(format!("{bx:.3}")) y=(format!("{:.3}", by - 0.01)) text-anchor="middle" font-size="0.22" font-weight="800" fill=(ink) { (ratio) }
         }
-        (port_boat(p.boat_x, p.boat_y))
     }
 }
 
