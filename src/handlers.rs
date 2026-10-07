@@ -321,6 +321,13 @@ async fn action(
                     if reset_mode {
                         data.members[v].mode = ViewMode::Normal;
                     }
+                    // Playing Road Building drops the player straight into road
+                    // placement, so the free roads are placed with the normal
+                    // board-highlight flow instead of them having to find the
+                    // build button first.
+                    if matches!(act, Action::PlayRoadBuilding) {
+                        data.members[v].mode = ViewMode::PlaceRoad;
+                    }
                     data.last_activity_ms = now_ms();
                     Ok(())
                 }
