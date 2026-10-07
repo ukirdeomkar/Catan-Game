@@ -462,6 +462,34 @@ fn longest_road_counts_a_ring_and_breaks_on_block() {
 }
 
 #[test]
+fn longest_road_still_counts_a_run_between_two_opponent_buildings() {
+    let mut s = fresh(2, 33);
+    for e in s.board.edges.iter_mut() {
+        e.owner = None;
+    }
+    // A single hex's six edges form a ring owned by player 0.
+    let verts = s.board.hexes[0].vertices;
+    for i in 0..6 {
+        let (a, b) = (verts[i], verts[(i + 1) % 6]);
+        let e = s
+            .board
+            .edges
+            .iter()
+            .position(|ed| (ed.a == a && ed.b == b) || (ed.a == b && ed.b == a))
+            .unwrap();
+        s.board.edges[e].owner = Some(0);
+    }
+    // Block two adjacent ring vertices: the remaining five roads form one run
+    // whose *both* ends are opponent buildings, and the sixth road sits
+    // directly between two opponent buildings.
+    for &v in &[verts[0], verts[1]] {
+        s.board.vertices[v].owner = Some(1);
+        s.board.vertices[v].building = Building::Settlement;
+    }
+    assert_eq!(longest_road_length(&s.board, 0), 5);
+}
+
+#[test]
 fn longest_road_card_requires_five_and_handles_ties() {
     let mut s = fresh(2, 31);
     for e in s.board.edges.iter_mut() {

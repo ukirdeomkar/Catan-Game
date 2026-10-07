@@ -381,8 +381,15 @@ impl GameState {
         self.remove_dev_card(actor, DevCard::RoadBuilding);
         // The card grants two roads, but only as many as remain in stock.
         self.free_roads_left = 2.min(self.players[actor].roads_left);
+        let free = self.free_roads_left;
         let name = self.players[actor].name.clone();
-        self.push_log(Some(actor), format!("{name} plays Road Building."));
+        self.push_log(
+            Some(actor),
+            format!(
+                "{name} gets {free} free road{}.",
+                if free == 1 { "" } else { "s" }
+            ),
+        );
         Ok(())
     }
 

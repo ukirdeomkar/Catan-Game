@@ -26,16 +26,26 @@ pub fn longest_road_length(board: &Board, pid: PlayerId) -> u8 {
         board: &Board,
         incident: &[Vec<usize>],
         blocked: &impl Fn(usize) -> bool,
+        start: usize,
         vertex: usize,
         used: &mut Vec<bool>,
         len: u8,
         best: &mut u8,
+        is_start: bool,
     ) {
+        // A road that started at an opponent's building must not loop back onto
+        // it: the building breaks the road, so both of its roads cannot be part
+        // of one continuous run. (A loop among the player's own vertices still
+        // counts in full, matching the ring behaviour elsewhere.)
+        if !is_start && vertex == start && blocked(start) {
+            return;
+        }
         if len > *best {
             *best = len;
         }
-        // A path may not continue through a vertex occupied by an opponent.
-        if blocked(vertex) {
+        // A path may not continue *through* a vertex occupied by an opponent,
+        // but such a vertex is still a legal end of the road.
+        if !is_start && blocked(vertex) {
             return;
         }
         for &ei in &incident[vertex] {
@@ -45,16 +55,16 @@ pub fn longest_road_length(board: &Board, pid: PlayerId) -> u8 {
             let e = &board.edges[ei];
             let Some(other) = e.other(vertex) else { continue };
             used[ei] = true;
-            dfs(board, incident, blocked, other, used, len + 1, best);
+            dfs(board, incident, blocked, start, other, used, len + 1, best, false);
             used[ei] = false;
         }
     }
 
     let mut used = vec![false; board.edges.len()];
     for v in 0..board.vertices.len() {
-        if blocked(v) {
-            continue;
-        }
+        // Start from every vertex that touches a road of this player, even an
+        // opponent's building: a road segment may be bracketed by opponent
+        // buildings at both ends, and only starting there counts the whole run.
         if incident[v].is_empty() {
             continue;
         }
@@ -63,9 +73,11 @@ pub fn longest_road_length(board: &Board, pid: PlayerId) -> u8 {
             &incident,
             &blocked,
             v,
+            v,
             &mut used,
             0,
             &mut best,
+            true,
         );
     }
     best
