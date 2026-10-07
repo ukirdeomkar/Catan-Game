@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <ellipse cx="50" cy="88" rx="40" ry="9" fill="#000000" opacity="0.26"/>
+  <polygon points="50,68 84,79 84,88 50,98 16,88 16,79" fill="currentColor" opacity="0.55"/>
+  <rect x="36" y="52" width="30" height="30" fill="currentColor"/>
+  <rect x="36" y="52" width="30" height="30" stroke="#000000" stroke-opacity="0.35" stroke-width="2.5"/>
+  <polygon points="32,54 51,36 70,54" fill="currentColor"/>
+  <polygon points="32,54 51,36 70,54" stroke="#000000" stroke-opacity="0.35" stroke-width="2.5" stroke-linejoin="round"/>
+  <rect x="14" y="40" width="20" height="44" fill="currentColor"/>
+  <rect x="14" y="40" width="20" height="44" stroke="#000000" stroke-opacity="0.35" stroke-width="2.5"/>
+  <polygon points="10,42 24,26 38,42" fill="currentColor"/>
+  <polygon points="10,42 24,26 38,42" stroke="#000000" stroke-opacity="0.35" stroke-width="2.5" stroke-linejoin="round"/>
+  <rect x="66" y="34" width="20" height="50" fill="currentColor"/>
+  <rect x="66" y="34" width="20" height="50" stroke="#000000" stroke-opacity="0.35" stroke-width="2.5"/>
+  <polygon points="62,36 76,18 90,36" fill="currentColor"/>
+  <polygon points="62,36 76,18 90,36" stroke="#000000" stroke-opacity="0.35" stroke-width="2.5" stroke-linejoin="round"/>
+  <line x1="24" y1="26" x2="24" y2="4" stroke="#000000" stroke-opacity="0.55" stroke-width="2.5"/>
+  <polygon points="24,4 42,10 24,16" fill="currentColor"/>
+  <rect x="46" y="62" width="10" height="20" rx="1.5" fill="#000000" opacity="0.42"/>
+</svg>

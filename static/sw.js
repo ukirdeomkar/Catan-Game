@@ -5,7 +5,7 @@
 // to give a small offline fallback. The game itself is live over SSE, so we
 // never cache game traffic — only the static app shell.
 
-const CACHE = "catanou-v5";
+const CACHE = "catanou-v10";
 
 // App-shell assets, pre-cached on install. Failures are ignored per-file so a
 // single missing asset can never wedge the worker install.
@@ -31,6 +31,26 @@ const SHELL = [
   "/static/branding/potrait.webp",
   "/static/branding/icon-192.png",
   "/static/branding/icon-512.png",
+  "/static/board/ocean.webp",
+  "/static/board/beach.webp",
+  "/static/board/tile-wood.webp",
+  "/static/board/tile-brick.webp",
+  "/static/board/tile-wheat.webp",
+  "/static/board/tile-ore.webp",
+  "/static/board/tile-sheep.webp",
+  "/static/board/tile-desert.webp",
+  "/static/cards/resource-wood.webp",
+  "/static/cards/resource-brick.webp",
+  "/static/cards/resource-wheat.webp",
+  "/static/cards/resource-ore.webp",
+  "/static/cards/resource-sheep.webp",
+  "/static/cards/dev-knight.webp",
+  "/static/cards/dev-monopoly.webp",
+  "/static/cards/dev-roadbuilding.webp",
+  "/static/cards/dev-yearofplenty.webp",
+  "/static/cards/dev-victorypoint.webp",
+  "/static/art/port-boat.webp",
+  "/static/art/port-bridge.webp",
 ];
 
 self.addEventListener("install", (event) => {
