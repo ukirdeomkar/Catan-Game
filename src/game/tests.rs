@@ -806,3 +806,52 @@ fn robbing_a_bot_builds_a_grudge() {
     s.decay_anger(1);
     assert_eq!(s.anger(1, 0), 0, "grudges cool off over turns");
 }
+
+#[test]
+fn playing_the_largest_army_knight_completes_a_hidden_card_win() {
+    let mut s = fresh(2, 80);
+    auto_setup(&mut s);
+    // Rebuild player 0's board as 3 cities + 1 settlement = 7 public VP.
+    for v in s.board.vertices.iter_mut() {
+        v.owner = None;
+        v.building = Building::None;
+    }
+    s.players[0].cities_left = 3;
+    s.players[0].settlements_left = 1;
+    let mut built = 0;
+    for v in 0..s.board.vertices.len() {
+        if built < 3 && s.board.vertices[v].building == Building::None {
+            s.place_building(0, v, Building::City);
+            built += 1;
+        }
+    }
+    let sv = (0..s.board.vertices.len())
+        .find(|&v| s.board.vertices[v].building == Building::None)
+        .unwrap();
+    s.place_building(0, sv, Building::Settlement);
+    assert_eq!(s.public_victory_points(0), 7);
+
+    // Two knights already played plus one hidden VP card: the third knight's
+    // Largest Army (+2) brings public 9 and the hidden card completes 10.
+    s.players[0].played_knights = 2;
+    s.players[0].dev_cards = vec![DevCard::Knight, DevCard::VictoryPoint];
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+
+    s.apply(0, &Action::PlayKnight).unwrap();
+
+    assert_eq!(s.largest_army, Some(0));
+    assert_eq!(s.public_victory_points(0), 9, "Largest Army is public");
+    assert_eq!(
+        s.total_victory_points(0),
+        10,
+        "a hidden VP card still counts for the win"
+    );
+    assert_eq!(
+        s.winner,
+        Some(0),
+        "the win must be detected the moment Largest Army completes it"
+    );
+    assert!(s.is_over());
+}

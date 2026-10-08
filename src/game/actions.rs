@@ -366,6 +366,10 @@ impl GameState {
         let name = self.players[actor].name.clone();
         self.push_log(Some(actor), format!("{name} plays a Knight."));
         self.phase = Phase::MoveRobber { after_knight: true };
+        // Largest Army can be the point that reaches 10, so a Knight must run
+        // the win check just like a build does. Run it after the phase move so
+        // a win overwrites MoveRobber with GameOver.
+        self.check_winner();
         Ok(())
     }
 

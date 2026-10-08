@@ -123,7 +123,8 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 - **Longest Road**: DFS longest trail over a player's edges; an opponent's building blocks
   traversal *through* its vertex (you may still end a road there). Card needs ≥5; ties keep
   the current holder, otherwise no award. See `scoring.rs::longest_road_length`.
-- **Largest Army**: ≥3 knights, same tie/holder rule.
+- **Largest Army**: ≥3 knights, same tie/holder rule. Playing that knight also runs
+  `check_winner`, so Largest Army can be the point that reaches 10.
 - **Discard on 7**: `floor(hand/2)`; multiple players can be pending simultaneously — the
   acting player in `Phase::Discard` is whoever is discarding, **not** `current`.
 - **Bank is finite** (19 per resource); production and Year of Plenty respect it.
