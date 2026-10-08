@@ -10,10 +10,48 @@ h1,h2,h3{margin:.2em 0}
 .win{font-weight:800;color:#1f8a4c}
 code{background:#0f151b;color:#e9eef2;padding:1px 6px;border-radius:5px}
 
-/* Non-game pages keep the branded dark theme. */
-body:not(.game){min-height:100vh;display:flex;flex-direction:column;color:#e9eef2;background-color:#0e1319;background-image:linear-gradient(rgba(9,12,17,.80),rgba(9,12,17,.93)),url('/static/branding/landscape.webp');background-size:cover;background-position:center top;background-repeat:no-repeat;background-attachment:fixed}
-@media(max-width:760px){body:not(.game){background-image:linear-gradient(rgba(9,12,17,.84),rgba(9,12,17,.94)),url('/static/branding/potrait.webp')}}
+/* Home / lobby / join / error share the game's blue ocean theme so the whole
+   app reads as one product instead of a dark landing page plus a blue game. */
+body:not(.game){min-height:100vh;display:flex;flex-direction:column;color:#f2f7fb;background-color:#0e5c8e;background-image:linear-gradient(rgba(7,45,71,.60),rgba(5,33,53,.82)),url('/static/board/ocean.webp');background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed}
 body:not(.game)>.wrap{flex:1 0 auto}
+/* Centered single-column layout for the option screens (fixes the "content
+   stretches weirdly across a wide page" look). */
+body:not(.game) .wrap.page{width:100%;max-width:560px;margin:0 auto;padding:20px 16px 10px}
+.hero{text-align:center;margin:4px 0 20px}
+.hero img{width:78px;height:78px;border-radius:20px;display:block;margin:0 auto 12px;box-shadow:0 8px 22px #0006;border:1px solid #ffffff2e}
+.hero h1{font-size:30px;font-weight:900;letter-spacing:.3px;margin:0 0 6px}
+.hero .muted{font-size:14px}
+body:not(.game) .muted{color:#cfe0ec}
+body:not(.game) h1,body:not(.game) h2,body:not(.game) h3{color:#fff}
+/* Translucent glass cards that echo the in-game pills and chips. */
+body:not(.game) .card{background:rgba(7,40,63,.66);border:1px solid #ffffff2e;border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 8px 26px #00000038;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+body:not(.game) .card h3{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:16px;font-weight:900}
+body:not(.game) .card h3 .ic{width:20px;height:20px;color:#ffeaa7}
+body:not(.game) .card form+form{margin-top:10px}
+/* Stacked, labeled fields — simpler than the old single wrapping row. */
+body:not(.game) .field{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+body:not(.game) .field>span{font-size:11px;font-weight:900;letter-spacing:.7px;text-transform:uppercase;color:#bcd3e3}
+body:not(.game) .field input,body:not(.game) .field select{width:100%}
+body:not(.game) input[type=text],body:not(.game) input[type=number]{background:#ffffff1c;color:#fff;border:1px solid #ffffff3d;border-radius:10px;padding:10px 12px;font:inherit;font-size:15px;min-height:44px}
+/* Basic styled dropdown (home + lobby). The old control used a translucent
+   background and left the native option list unstyled, so some browsers painted
+   the options translucently or white-on-white — the "weird" selection the board
+   reported. Use a solid readable closed surface with a light chevron, and give
+   native options a solid surface + dark text so the expanded list is legible. */
+body:not(.game) select{background-color:#0b3f63;color:#fff;border:1px solid #ffffff3d;border-radius:10px;padding:10px 40px 10px 12px;font:inherit;font-size:15px;min-height:44px;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7'%3E%3Cpath fill='%23bcd3e3' d='M0 0l6 6 6-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center}
+body:not(.game) select option{background-color:#ffffff;color:#22303c}
+body:not(.game) input::placeholder{color:#bcd0df}
+body:not(.game) .formrow{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+body:not(.game) .formrow .field{flex:1 1 150px;margin-bottom:0}
+body:not(.game) .card .btn{width:100%}
+body:not(.game) .card .formrow .btn{width:auto}
+body:not(.game) .pcard{background:#ffffff1f;border:1px solid #ffffff33}
+body:not(.game) .pcard .pname{color:#fff}
+body:not(.game) code.roomcode{background:#ffffff22;color:#ffeaa7;font-weight:900;letter-spacing:6px;font-size:30px;padding:8px 16px 8px 22px;border-radius:12px}
+.codecard{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
+.codecard .codelabel{font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#bcd3e3}
+body:not(.game) #audio-toggle{background:#ffffff22}
+body:not(.game) #audio-toggle:hover{background:#ffffff33}
 .wrap{max-width:1180px;margin:0 auto;padding:14px}
 .card{background:rgba(22,29,36,.86);border:1px solid #2c3742;border-radius:12px;padding:12px;margin-bottom:12px}
 .btn{background:#2e7dd1;color:#fff;border:0;border-radius:10px;padding:10px 14px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;min-height:40px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}

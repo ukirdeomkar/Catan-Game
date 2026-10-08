@@ -293,33 +293,44 @@ fn shell_game(title: &str, body: Markup) -> Markup {
 
 pub fn home_page(error: Option<&str>) -> Markup {
     shell("Play Catanou", html! {
-        div.wrap {
-            h1 { "Settlers of Catan" }
-            p.muted { "The classic game of Catan, now online to play with your friends. Create a room and share the code, or join with a code." }
+        div.wrap.page {
+            div.hero {
+                p.muted { "The classic game of Catan, online with friends." }
+            }
             @if let Some(e) = error { div.card #toasts { (e) } }
             div.card {
-                h3 { "Create a new game" }
+                h3 { (ic("play")) "Create a new game" }
                 form method="post" action="/create" {
-                    div.row {
-                        input type="text" name="name" placeholder="Name (max 5)" maxlength="5";
-                        label { "Turn limit " select name="turn_seconds" {
-                            option value="60" { "1 min" }
-                            option value="180" selected { "3 min" }
-                            option value="300" { "5 min" }
-                            option value="600" { "10 min" }
-                        } }
+                    label.field {
+                        span { "Your name" }
+                        input type="text" name="name" placeholder="Max 5 characters" maxlength="5";
+                    }
+                    div.formrow {
+                        label.field {
+                            span { "Turn length" }
+                            select name="turn_seconds" {
+                                option value="60" { "1 min" }
+                                option value="180" selected { "3 min" }
+                                option value="300" { "5 min" }
+                                option value="600" { "10 min" }
+                            }
+                        }
                         button.btn type="submit" { "Create room" }
                     }
                 }
             }
             div.card {
-                h3 { "Join a game" }
+                h3 { (ic("users")) "Join a game" }
                 form method="post" action="/join" {
-                    div.row {
-                        input type="text" name="code" placeholder="Room code" maxlength="6" style="text-transform:uppercase";
-                        input type="text" name="name" placeholder="Name (max 5)" maxlength="5";
-                        button.btn type="submit" { "Join" }
+                    label.field {
+                        span { "Room code" }
+                        input type="text" name="code" placeholder="e.g. ABC123" maxlength="6" style="text-transform:uppercase";
                     }
+                    label.field {
+                        span { "Your name" }
+                        input type="text" name="name" placeholder="Max 5 characters" maxlength="5";
+                    }
+                    button.btn.sec type="submit" { "Join room" }
                 }
             }
         }
@@ -328,10 +339,15 @@ pub fn home_page(error: Option<&str>) -> Markup {
 
 pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
     shell("Lobby", html! {
-        div.wrap {
-            h1 { "Lobby" }
-            p.muted { "Share this room code with friends:" }
-            p { code style="font-size:22px;letter-spacing:3px" { (code) } }
+        div.wrap.page {
+            div.hero {
+                h1 { "Lobby" }
+                p.muted { "Share this room code with friends" }
+            }
+            div.card.codecard {
+                span.codelabel { "Room code" }
+                code.roomcode { (code) }
+            }
             div hx-ext="sse" sse-connect=(format!("/room/{code}/events")) {
                 div #lobbybox sse-swap="lobby" { (lobby_frag(code, data, token)) }
             }
@@ -344,7 +360,7 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
     let is_host = data.is_host(token);
     html! {
         div.card {
-            h3 { "Players (" (data.members.len()) "/4)" }
+            h3 { (ic("users")) "Players (" (data.members.len()) "/4)" }
             div.players {
                 @for m in &data.members {
                     div.pcard {
@@ -360,34 +376,42 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
                 }
             }
         }
-        div.row {
-            @if is_host {
+        @if is_host {
+            div.card {
+                h3 { (ic("settings")) "Host controls" }
                 form method="post" action=(format!("/room/{code}/add_bot")) {
-                    select name="level" {
-                        @for level in BotLevel::ALL {
-                            option value=(level.slug()) selected[level == BotLevel::default()] { (level.label()) }
+                    div.formrow {
+                        label.field {
+                            span { "Bot difficulty" }
+                            select name="level" {
+                                @for level in BotLevel::ALL {
+                                    option value=(level.slug()) selected[level == BotLevel::default()] { (level.label()) }
+                                }
+                            }
                         }
+                        button.btn.sec type="submit" disabled[data.members.len() >= 4] { "Add bot" }
                     }
-                    button.btn.sec type="submit" disabled[data.members.len() >= 4] { "Add bot" }
                 }
                 form method="post" action=(format!("/room/{code}/start")) {
                     button.btn type="submit" disabled[!data.can_start()] {
                         "Start game (" (data.members.len()) "/4)"
                     }
                 }
-            } @else {
-                p.muted { "Waiting for the host to start…" }
+                @if data.members.len() < 2 {
+                    p.muted style="margin:10px 0 0" { "Need at least 2 players to start." }
+                }
             }
-        }
-        @if data.members.len() < 2 {
-            p.muted { "Need at least 2 players to start." }
+        } @else {
+            div.card {
+                p.muted style="margin:0" { "Waiting for the host to start…" }
+            }
         }
     }
 }
 
 pub fn error_page(msg: &str) -> Markup {
     shell("Catan", html! {
-        div.wrap {
+        div.wrap.page {
             div.card {
                 h1 { "Oops" }
                 p { (msg) }
@@ -399,14 +423,15 @@ pub fn error_page(msg: &str) -> Markup {
 
 pub fn join_page(code: &str) -> Markup {
     shell("Join Catan", html! {
-        div.wrap {
+        div.wrap.page {
             div.card {
                 h1 { "Join game " code { (code) } }
                 form method="post" action=(format!("/room/{code}/join")) {
-                    div.row {
-                        input type="text" name="name" placeholder="Name (max 5)" maxlength="5";
-                        button.btn type="submit" { "Join" }
+                    label.field {
+                        span { "Your name" }
+                        input type="text" name="name" placeholder="Max 5 characters" maxlength="5";
                     }
+                    button.btn type="submit" { "Join" }
                 }
             }
         }
