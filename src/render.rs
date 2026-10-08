@@ -4,7 +4,7 @@ use crate::game::resources::{
     ResourceHand,
 };
 use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerId, TradeResponse};
-use crate::state::{Layout, RoomData, ViewMode};
+use crate::state::{Layout, RoomData, ViewMode, now_ms};
 use maud::{DOCTYPE, Markup, html};
 
 // ---------------------------------------------------------------------------
@@ -59,6 +59,7 @@ fn ic(name: &str) -> Markup {
         "city" => r#"<path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/>"#,
         "bank" => r#"<path d="M3 22h18"/><path d="M6 18v-7"/><path d="M10 18v-7"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="m12 2 9 5H3z"/>"#,
         "play" => r#"<path d="m9 18 6-6-6-6"/>"#,
+        "pause" => r#"<rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/>"#,
         "offer" => r#"<path d="M14.54 21.69a.5.5 0 0 0 .94-.03l6.5-19a.5.5 0 0 0-.64-.63l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="m21.85 2.15-10.94 10.94"/>"#,
         "swap" => r#"<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>"#,
         "trash" => r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>"#,
@@ -322,6 +323,10 @@ pub fn home_page(error: Option<&str>) -> Markup {
                         }
                         button.btn type="submit" { "Create room" }
                     }
+                    label.check {
+                        input type="checkbox" name="allow_pause";
+                        span { "Allow players to pause the game" }
+                    }
                 }
             }
             div.card {
@@ -571,6 +576,23 @@ pub struct Fragments {
 }
 
 pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Fragments {
+    // Server-side blinding: while a room is paused, a seated human gets only the
+    // paused panel. Every information-bearing fragment is blanked *before* any
+    // HTML is produced, so no board/hand/bank/log markup reaches the client.
+    if let Some(v) = viewer {
+        if data.viewer_blinded(v) {
+            return Fragments {
+                status: Markup::default(),
+                board: paused_frag(data),
+                players: Markup::default(),
+                hand: Markup::default(),
+                controls: Markup::default(),
+                trades: Markup::default(),
+                log: Markup::default(),
+                turn: Markup::default(),
+            };
+        }
+    }
     let layout = viewer.map(|v| member_layout(data, v)).unwrap_or_default();
     Fragments {
         status: status_frag(game, data, viewer),
@@ -586,6 +608,36 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
     }
 }
 
+/// The blinded screen shown to every seated human while the room is paused.
+/// Deliberately contains no board, hand, bank, build/trade controls, or log.
+fn paused_frag(data: &RoomData) -> Markup {
+    let by = data
+        .paused_by
+        .and_then(|p| data.members.get(p))
+        .map(|m| m.name.clone())
+        .unwrap_or_else(|| "A player".into());
+    let mins_left = data.pause_deadline_ms.saturating_sub(now_ms()) / 60_000;
+    let resume_url = format!("/room/{}/resume", data.code);
+    html! {
+        div.pause-screen {
+            div.card.pause-card {
+                div.pause-ic { (ic("pause")) }
+                h2 { "Game paused" }
+                p.muted {
+                    "Paused by " b { (by) } "."
+                    @if data.pause_deadline_ms > 0 {
+                        " Auto-resumes in about " (mins_left) " min."
+                    }
+                }
+                p.muted.small {
+                    "The board, your cards, and the game log are hidden while paused."
+                }
+                button.btn.primary type="button" hx-post=(resume_url) { "Resume game" }
+            }
+        }
+    }
+}
+
 /// The visual layout a viewer has chosen (defaults to the painted board).
 fn member_layout(data: &RoomData, v: PlayerId) -> Layout {
     data.members.get(v).map(|m| m.layout).unwrap_or_default()
@@ -593,6 +645,7 @@ fn member_layout(data: &RoomData, v: PlayerId) -> Layout {
 
 pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
     let game = data.game.as_ref().expect("started game");
+    let blinded = viewer.is_some_and(|v| data.viewer_blinded(v));
     let f = fragments(game, data, viewer);
     shell_game("Catan game", html! {
         div #app hx-ext="sse" sse-connect=(format!("/room/{code}/events")) {
@@ -609,13 +662,17 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             div #trades.trades sse-swap="trades" { (f.trades) }
             div #turn.dockwrap sse-swap="turn" { (f.turn) }
             div #hand.handstrip sse-swap="hand" { (f.hand) }
-            footer.gamefoot {
-                "Made with ♥ by "
-                a href="https://github.com/ukirdeomkar" target="_blank" rel="noopener" { "Omkar" }
-            }
-            (menu_sheet(code, data, game, viewer))
-            @if let Some(v) = viewer {
-                (trade_modal(game, data, v))
+            // The info sheet and trade modal expose board/log/hand state, so a
+            // blinded viewer never receives them (they are absent from the DOM).
+            @if !blinded {
+                footer.gamefoot {
+                    "Made with ♥ by "
+                    a href="https://github.com/ukirdeomkar" target="_blank" rel="noopener" { "Omkar" }
+                }
+                (menu_sheet(code, data, game, viewer))
+                @if let Some(v) = viewer {
+                    (trade_modal(game, data, v))
+                }
             }
         }
     })
@@ -832,6 +889,10 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
     html! {
         div.dock data-my-turn[my_play] {
             div.dock-dice { (dock_dice(game, data)) }
+            @if data.allow_pause && !data.paused {
+                button.dockbtn.pausebtn type="button" title="Pause game" aria-label="Pause game"
+                    hx-post=(format!("/room/{}/pause", data.code)) { (ic("pause")) }
+            }
             @if my_setup {
                 div.dock-wait { "Place your piece on the board." }
             } @else if my_robber {

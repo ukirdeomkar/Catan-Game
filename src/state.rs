@@ -16,6 +16,10 @@ use tokio::sync::watch;
 pub const ROOM_CODE_LEN: usize = 4;
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+/// Hard cap on a single pause; the room auto-resumes after this long so one
+/// player cannot stall a table indefinitely.
+pub const PAUSE_CAP_MS: u64 = 30 * 60 * 1000;
+
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ViewMode {
     #[default]
@@ -65,6 +69,27 @@ pub struct RoomData {
     /// Per-turn time limit in seconds (0 = untimed), chosen at creation.
     #[serde(default)]
     pub turn_seconds: u64,
+    /// Whether this room allows pausing (chosen at creation; default off).
+    #[serde(default)]
+    pub allow_pause: bool,
+    /// Whole-room pause in effect: freezes the turn timer and bots, and blinds
+    /// every viewer server-side (no board, hand, bank, log until resumed).
+    #[serde(default)]
+    pub paused: bool,
+    /// Seat that began the current pause, for the paused screen + audit log.
+    #[serde(default)]
+    pub paused_by: Option<usize>,
+    /// When the current pause began (unix-ms).
+    #[serde(default)]
+    pub paused_at_ms: u64,
+    /// Auto-resume deadline for the current pause (0 = none).
+    #[serde(default)]
+    pub pause_deadline_ms: u64,
+    /// Frozen remaining turn time to restore on resume. Persisted because
+    /// `turn_deadline_ms` is `#[serde(skip)]`, so a restart mid-pause keeps the
+    /// clock correctly stopped.
+    #[serde(default)]
+    pub pause_remaining_ms: u64,
     /// Absolute unix-ms deadline for the current turn (0 = not armed).
     #[serde(skip)]
     pub turn_deadline_ms: u64,
@@ -94,6 +119,29 @@ impl RoomData {
 
     pub fn can_start(&self) -> bool {
         !self.started && self.members.len() >= MIN_PLAYERS
+    }
+
+    /// Pausing is only meaningful during a live game (there is no clock to
+    /// freeze in the lobby or once the game is over).
+    pub fn can_pause_now(&self) -> bool {
+        self.allow_pause
+            && self.started
+            && self.game.as_ref().is_some_and(|g| {
+                matches!(
+                    g.phase,
+                    Phase::Setup
+                        | Phase::Play
+                        | Phase::Discard
+                        | Phase::MoveRobber { .. }
+                        | Phase::Steal { .. }
+                )
+            })
+    }
+
+    /// Whether `v`'s view must be blinded because the room is paused. Applies to
+    /// seated humans only; bots never render a view.
+    pub fn viewer_blinded(&self, v: usize) -> bool {
+        self.paused && self.members.get(v).is_some_and(|m| !m.is_bot)
     }
 
     pub fn free_color(&self) -> Color {
@@ -209,6 +257,7 @@ impl AppState {
         &self,
         name: String,
         turn_seconds: u64,
+        allow_pause: bool,
     ) -> Result<(Arc<Room>, String), JoinError> {
         let name = validate_name(&name)?;
         let code = self.unique_code();
@@ -232,6 +281,12 @@ impl AppState {
             created_ms: now_ms(),
             last_activity_ms: now_ms(),
             turn_seconds,
+            allow_pause,
+            paused: false,
+            paused_by: None,
+            paused_at_ms: 0,
+            pause_deadline_ms: 0,
+            pause_remaining_ms: 0,
             turn_deadline_ms: 0,
             turn_armed_for: u64::MAX,
             bot_next_ms: 0,
@@ -327,6 +382,56 @@ impl AppState {
         Ok(())
     }
 
+    /// Pause the whole room. Any seated human may do it; idempotent.
+    pub fn pause_room(&self, room: &Arc<Room>, token: &str) -> Result<(), String> {
+        let changed = {
+            let mut data = room.data.lock().unwrap();
+            let Some(v) = data.member_index(token) else {
+                return Err("You are not a member of this game.".into());
+            };
+            if data.members[v].is_bot {
+                return Err("Bots cannot pause.".into());
+            }
+            if !data.allow_pause {
+                return Err("Pausing is not enabled for this room.".into());
+            }
+            if data.paused {
+                return Ok(());
+            }
+            if !data.can_pause_now() {
+                return Err("You can only pause during a live game.".into());
+            }
+            begin_pause(&mut data, v)
+        };
+        if changed {
+            room.bump();
+            self.persist(room);
+        }
+        Ok(())
+    }
+
+    /// Resume (or cancel) the room pause. Any seated human may do it; idempotent.
+    pub fn resume_room(&self, room: &Arc<Room>, token: &str) -> Result<(), String> {
+        let changed = {
+            let mut data = room.data.lock().unwrap();
+            let Some(v) = data.member_index(token) else {
+                return Err("You are not a member of this game.".into());
+            };
+            if data.members[v].is_bot {
+                return Err("Bots cannot resume.".into());
+            }
+            if !data.paused {
+                return Ok(());
+            }
+            resume_data(&mut data, false)
+        };
+        if changed {
+            room.bump();
+            self.persist(room);
+        }
+        Ok(())
+    }
+
     pub fn persist(&self, room: &Arc<Room>) {
         let snapshot = {
             let data = room.data.lock().unwrap();
@@ -395,6 +500,62 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Enter the paused state for `data`, freezing the remaining turn time.
+fn begin_pause(data: &mut RoomData, v: usize) -> bool {
+    let now = now_ms();
+    data.paused = true;
+    data.paused_by = Some(v);
+    data.paused_at_ms = now;
+    data.pause_deadline_ms = now + PAUSE_CAP_MS;
+    data.pause_remaining_ms = data.turn_deadline_ms.saturating_sub(now);
+    data.last_activity_ms = now;
+    let name = data
+        .members
+        .get(v)
+        .map(|m| m.name.clone())
+        .unwrap_or_else(|| "A player".into());
+    if let Some(g) = data.game.as_mut() {
+        g.push_log(Some(v), format!("{name} paused the game."));
+    }
+    true
+}
+
+/// Leave the paused state, restoring the frozen turn time. `auto` marks the
+/// 30-minute cap firing rather than a player pressing Resume. Returns whether
+/// anything changed.
+fn resume_data(data: &mut RoomData, auto: bool) -> bool {
+    if !data.paused {
+        return false;
+    }
+    let now = now_ms();
+    let by = data.paused_by;
+    data.paused = false;
+    data.paused_by = None;
+    if data.pause_remaining_ms > 0 {
+        // Re-arm the timer so tick_turn_timers uses the frozen remainder rather
+        // than a fresh turn. turn_armed_for is unchanged, so the tick sees the
+        // deadline already armed for this turn.
+        data.turn_deadline_ms = now + data.pause_remaining_ms;
+    }
+    data.pause_remaining_ms = 0;
+    data.pause_deadline_ms = 0;
+    data.paused_at_ms = 0;
+    data.last_activity_ms = now;
+    let text = if auto {
+        "The game auto-resumed after the pause time limit.".to_string()
+    } else {
+        let name = by
+            .and_then(|p| data.members.get(p))
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| "A player".into());
+        format!("{name} resumed the game.")
+    };
+    if let Some(g) = data.game.as_mut() {
+        g.push_log(by, text);
+    }
+    true
+}
+
 /// Arm/expire the per-turn timer for every room (called ~1x/second).
 pub fn tick_turn_timers(app: &AppState) {
     use crate::game::state::Phase;
@@ -403,36 +564,46 @@ pub fn tick_turn_timers(app: &AppState) {
     for room in rooms {
         let mut changed = false;
         let mut ended = false;
+        let mut resumed = false;
         {
             let mut data = room.data.lock().unwrap();
-            let secs = data.turn_seconds;
-            let info = data.game.as_ref().map(|g| {
-                (
-                    matches!(g.phase, Phase::Play),
-                    g.turn as u64 * 64 + g.current as u64,
-                )
-            });
-            match info {
-                Some((true, key)) if secs > 0 => {
-                    if data.turn_armed_for != key {
-                        data.turn_deadline_ms = now + secs * 1000;
-                        data.turn_armed_for = key;
-                        changed = true;
-                    } else if now >= data.turn_deadline_ms {
-                        if let Some(g) = data.game.as_mut() {
-                            g.force_end_turn();
-                        }
-                        data.turn_deadline_ms = 0;
-                        data.turn_armed_for = u64::MAX;
-                        changed = true;
-                        ended = true;
-                    }
+            if data.paused {
+                // Freeze the turn timer entirely; only the auto-resume cap can
+                // move a paused room forward.
+                if data.pause_deadline_ms > 0 && now >= data.pause_deadline_ms {
+                    resumed = resume_data(&mut data, true);
+                    changed = resumed;
                 }
-                _ => {
-                    if data.turn_armed_for != u64::MAX {
-                        data.turn_deadline_ms = 0;
-                        data.turn_armed_for = u64::MAX;
-                        changed = true;
+            } else {
+                let secs = data.turn_seconds;
+                let info = data.game.as_ref().map(|g| {
+                    (
+                        matches!(g.phase, Phase::Play),
+                        g.turn as u64 * 64 + g.current as u64,
+                    )
+                });
+                match info {
+                    Some((true, key)) if secs > 0 => {
+                        if data.turn_armed_for != key {
+                            data.turn_deadline_ms = now + secs * 1000;
+                            data.turn_armed_for = key;
+                            changed = true;
+                        } else if now >= data.turn_deadline_ms {
+                            if let Some(g) = data.game.as_mut() {
+                                g.force_end_turn();
+                            }
+                            data.turn_deadline_ms = 0;
+                            data.turn_armed_for = u64::MAX;
+                            changed = true;
+                            ended = true;
+                        }
+                    }
+                    _ => {
+                        if data.turn_armed_for != u64::MAX {
+                            data.turn_deadline_ms = 0;
+                            data.turn_armed_for = u64::MAX;
+                            changed = true;
+                        }
                     }
                 }
             }
@@ -440,7 +611,7 @@ pub fn tick_turn_timers(app: &AppState) {
         if changed {
             room.bump();
         }
-        if ended {
+        if ended || resumed {
             app.persist(&room);
         }
     }
@@ -521,6 +692,10 @@ pub fn tick_bots(app: &AppState) {
     for room in rooms {
         let planned = {
             let mut data = room.data.lock().unwrap();
+            // A paused room does not advance: bots wait with everyone else.
+            if data.paused {
+                continue;
+            }
             let actor = match data.game.as_ref() {
                 Some(g) if !g.is_over() => bot_actor(&data, g),
                 _ => None,
@@ -609,4 +784,106 @@ pub fn data_dir_default() -> PathBuf {
 
 pub fn ensure_dir(dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(is_bot: bool) -> Member {
+        Member {
+            token: "t".into(),
+            name: "Al".into(),
+            color: Color::Red,
+            is_bot,
+            level: BotLevel::default(),
+            connected: true,
+            last_seen_ms: 0,
+            mode: ViewMode::Normal,
+            layout: Layout::default(),
+        }
+    }
+
+    fn room(paused: bool, is_bot: bool) -> RoomData {
+        RoomData {
+            code: "ABCD".into(),
+            host_token: "t".into(),
+            members: vec![member(is_bot)],
+            game: None,
+            started: true,
+            created_ms: 0,
+            last_activity_ms: 0,
+            turn_seconds: 180,
+            allow_pause: true,
+            paused,
+            paused_by: if paused { Some(0) } else { None },
+            paused_at_ms: 0,
+            pause_deadline_ms: 0,
+            pause_remaining_ms: 0,
+            turn_deadline_ms: 0,
+            turn_armed_for: u64::MAX,
+            bot_next_ms: 0,
+            bot_key: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn blinded_only_when_paused_and_human() {
+        assert!(!room(false, false).viewer_blinded(0));
+        assert!(room(true, false).viewer_blinded(0));
+        assert!(!room(true, true).viewer_blinded(0));
+        // Unknown seat is never blinded.
+        assert!(!room(true, false).viewer_blinded(9));
+    }
+
+    #[test]
+    fn pause_freezes_and_resume_restores_turn_time() {
+        let mut data = room(false, false);
+        let deadline = now_ms() + 4_000;
+        data.turn_deadline_ms = deadline;
+        data.turn_armed_for = 0;
+
+        assert!(begin_pause(&mut data, 0));
+        assert!(data.paused);
+        assert!(data.pause_remaining_ms >= 3_000 && data.pause_remaining_ms <= 4_000);
+        assert!(data.pause_deadline_ms > now_ms());
+
+        // Wait long enough that the original deadline would have passed.
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        let restore_at = now_ms();
+        assert!(resume_data(&mut data, false));
+        assert!(!data.paused);
+        assert!(data.paused_by.is_none());
+        assert!(
+            data.turn_deadline_ms >= restore_at + 3_000,
+            "resume must restore the frozen remainder"
+        );
+    }
+
+    #[test]
+    fn pause_resume_are_idempotent() {
+        let mut data = room(true, false);
+        assert!(resume_data(&mut data, false));
+        assert!(!resume_data(&mut data, false));
+        assert!(!resume_data(&mut data, true));
+    }
+
+    #[test]
+    fn can_pause_needs_option_flag() {
+        let mut data = room(false, false);
+        data.game = Some(GameState::new_lobby(
+            vec![PlayerConfig {
+                name: "Al".into(),
+                color: Color::Red,
+                is_bot: false,
+            }],
+            1,
+        ));
+        // Still in Lobby phase.
+        assert!(!data.can_pause_now());
+        data.game.as_mut().unwrap().start();
+        assert!(data.can_pause_now());
+        data.allow_pause = false;
+        assert!(!data.can_pause_now());
+    }
 }
