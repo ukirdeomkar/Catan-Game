@@ -743,6 +743,53 @@ fn nine_public_points_plus_a_hidden_card_is_a_win_at_ten() {
 }
 
 #[test]
+fn revealing_a_victory_point_card_makes_it_public() {
+    let mut s = fresh(2, 70);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint];
+    let base = s.public_victory_points(0);
+
+    // A hidden VP card stays out of the public total but still counts toward
+    // the total used for the win check.
+    assert_eq!(s.public_victory_points(0), base);
+    assert_eq!(s.total_victory_points(0), base + 1);
+
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
+
+    assert_eq!(s.players[0].revealed_vp, 1, "the card is now revealed");
+    assert!(s.players[0].dev_cards.is_empty(), "the card left the hand");
+    assert_eq!(
+        s.public_victory_points(0),
+        base + 1,
+        "a revealed VP card is public"
+    );
+    assert_eq!(s.total_victory_points(0), base + 1);
+
+    // Revealing is that turn's development-card action.
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint];
+    assert!(s.apply(0, &Action::RevealVictoryPoint).is_err());
+    assert_eq!(s.players[0].revealed_vp, 1);
+}
+
+#[test]
+fn cannot_reveal_a_victory_point_card_bought_this_turn() {
+    let mut s = fresh(2, 71);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].new_dev_cards = vec![DevCard::VictoryPoint];
+    assert!(
+        s.apply(0, &Action::RevealVictoryPoint).is_err(),
+        "a card bought this turn is not playable until the next turn"
+    );
+    assert_eq!(s.players[0].revealed_vp, 0);
+}
+
+#[test]
 fn robbing_a_bot_builds_a_grudge() {
     let mut s = fresh(2, 60);
     auto_setup(&mut s);

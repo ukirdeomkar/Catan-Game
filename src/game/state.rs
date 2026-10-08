@@ -85,6 +85,10 @@ pub struct Player {
     pub dev_cards: Vec<DevCard>,
     /// Cards bought this turn; not playable until the next turn.
     pub new_dev_cards: Vec<DevCard>,
+    /// Victory Point cards the owner has chosen to reveal; these count in the
+    /// public victory-point total, unlike still-hidden VP cards.
+    #[serde(default)]
+    pub revealed_vp: u8,
     pub played_knights: u8,
     pub roads_left: u8,
     pub settlements_left: u8,
@@ -102,6 +106,7 @@ impl Player {
             resources: ResourceHand::default(),
             dev_cards: Vec::new(),
             new_dev_cards: Vec::new(),
+            revealed_vp: 0,
             played_knights: 0,
             roads_left: 15,
             settlements_left: 5,

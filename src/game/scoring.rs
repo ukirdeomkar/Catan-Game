@@ -101,6 +101,8 @@ impl GameState {
         if self.largest_army == Some(pid) {
             vp += 2;
         }
+        // Victory Point cards the owner has revealed are public.
+        vp += self.players[pid].revealed_vp;
         vp
     }
 

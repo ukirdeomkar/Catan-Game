@@ -40,6 +40,8 @@ pub enum Action {
     PlayRoadBuilding,
     PlayYearOfPlenty { first: Resource, second: Resource },
     PlayMonopoly { resource: Resource },
+    /// Reveal a previously bought Victory Point card so everyone can see it.
+    RevealVictoryPoint,
 
     // --- Robber flow ---
     MoveRobber { hex: usize },
@@ -77,6 +79,7 @@ impl GameState {
                 self.play_year_of_plenty(actor, *first, *second)
             }
             Action::PlayMonopoly { resource } => self.play_monopoly(actor, *resource),
+            Action::RevealVictoryPoint => self.reveal_victory_point(actor),
             Action::MoveRobber { hex } => self.move_robber(actor, *hex),
             Action::StealFrom { player } => self.steal_from(actor, *player),
             Action::Discard { resources } => self.discard(actor, *resources),
@@ -455,6 +458,38 @@ impl GameState {
                 "{name} plays Monopoly on {} and collects {taken}.",
                 resource.name()
             ),
+        );
+        Ok(())
+    }
+
+    /// Reveal a Victory Point card bought on an earlier turn. Until revealed a
+    /// VP card is hidden (still private, but it counts toward the owner's total
+    /// for the win check); once revealed it adds to the public VP total.
+    ///
+    /// Revealing uses the player's one development-card action for the turn,
+    /// matching how every other development card is played.
+    fn reveal_victory_point(&mut self, actor: PlayerId) -> RuleResult {
+        self.require_play_turn(actor)?;
+        if self.played_dev_this_turn {
+            return Err(RuleError::new("Only one development card per turn"));
+        }
+        let Some(pos) = self.players[actor]
+            .dev_cards
+            .iter()
+            .position(|c| *c == DevCard::VictoryPoint)
+        else {
+            return Err(RuleError::new(
+                "You have no victory point card to reveal this turn",
+            ));
+        };
+        self.players[actor].dev_cards.remove(pos);
+        self.players[actor].revealed_vp += 1;
+        self.played_dev_this_turn = true;
+        let name = self.players[actor].name.clone();
+        let public = self.public_victory_points(actor);
+        self.push_log(
+            Some(actor),
+            format!("{name} reveals a Victory Point card ({public} public VP)."),
         );
         Ok(())
     }

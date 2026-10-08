@@ -874,26 +874,35 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                     }
                 }
             }
-            @let vp_playable = p
+            @let vp_hidden = p
                 .dev_cards
                 .iter()
                 .filter(|c| **c == DevCard::VictoryPoint)
                 .count();
-            @if vp_playable > 0 {
+            @let vp_revealed = p.revealed_vp as usize;
+            @if vp_hidden > 0 || vp_revealed > 0 {
                 div.devrow {
                     div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::VictoryPoint))) { (ic("trophy")) }
                     div.dev-body {
                         div.dev-name {
                             "Victory Point"
-                            @if vp_playable > 1 { " ×" (vp_playable) }
+                            @if vp_hidden + vp_revealed > 1 { " ×" (vp_hidden + vp_revealed) }
                         }
-                        div.dev-desc {
-                            "Worth " (vp_playable) " victory point"
-                            @if vp_playable > 1 { "s" }
-                            ". Counted automatically — no need to play."
+                        @if vp_revealed > 0 {
+                            div.dev-desc { (vp_revealed) " revealed — visible to everyone." }
+                        }
+                        @if vp_hidden > 0 {
+                            div.dev-desc {
+                                "Hidden. Reveal " @if vp_hidden > 1 { "one of these" } @else { "it" }
+                                " to show the point publicly. It still counts automatically if it would win the game."
+                            }
                         }
                     }
-                    span.dev-auto { "Auto" }
+                    @if vp_hidden > 0 {
+                        button.dockbtn hx-post=(url) hx-vals=(r#"{"action":"reveal_vp"}"#) title="Reveal a Victory Point card" { (ic("play")) }
+                    } @else {
+                        span.dev-auto { "Revealed" }
+                    }
                 }
             }
             @if !p.new_dev_cards.is_empty() {

@@ -183,7 +183,7 @@ impl DevCard {
     pub fn description(self) -> &'static str {
         match self {
             DevCard::Knight => "Move the robber and steal one resource from an adjacent player. Counts toward Largest Army.",
-            DevCard::VictoryPoint => "Worth 1 victory point. Kept hidden until the end.",
+            DevCard::VictoryPoint => "Worth 1 victory point. Hidden until you reveal it on a later turn.",
             DevCard::RoadBuilding => "Place two roads for free.",
             DevCard::YearOfPlenty => "Take any two resources from the bank.",
             DevCard::Monopoly => "Name a resource; every other player gives you all of their cards of that type.",
