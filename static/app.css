@@ -32,7 +32,14 @@ body:not(.game) .card form+form{margin-top:10px}
 body:not(.game) .field{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
 body:not(.game) .field>span{font-size:11px;font-weight:900;letter-spacing:.7px;text-transform:uppercase;color:#bcd3e3}
 body:not(.game) .field input,body:not(.game) .field select{width:100%}
-body:not(.game) select,body:not(.game) input[type=text],body:not(.game) input[type=number]{background:#ffffff1c;color:#fff;border:1px solid #ffffff3d;border-radius:10px;padding:10px 12px;font:inherit;font-size:15px;min-height:44px}
+body:not(.game) input[type=text],body:not(.game) input[type=number]{background:#ffffff1c;color:#fff;border:1px solid #ffffff3d;border-radius:10px;padding:10px 12px;font:inherit;font-size:15px;min-height:44px}
+/* Basic styled dropdown (home + lobby). The old control used a translucent
+   background and left the native option list unstyled, so some browsers painted
+   the options translucently or white-on-white — the "weird" selection the board
+   reported. Use a solid readable closed surface with a light chevron, and give
+   native options a solid surface + dark text so the expanded list is legible. */
+body:not(.game) select{background-color:#0b3f63;color:#fff;border:1px solid #ffffff3d;border-radius:10px;padding:10px 40px 10px 12px;font:inherit;font-size:15px;min-height:44px;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7'%3E%3Cpath fill='%23bcd3e3' d='M0 0l6 6 6-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center}
+body:not(.game) select option{background-color:#ffffff;color:#22303c}
 body:not(.game) input::placeholder{color:#bcd0df}
 body:not(.game) .formrow{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
 body:not(.game) .formrow .field{flex:1 1 150px;margin-bottom:0}
