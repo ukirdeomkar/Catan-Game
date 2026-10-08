@@ -470,13 +470,13 @@ impl GameState {
     /// VP card is hidden (still private, but it counts toward the owner's total
     /// for the win check); once revealed it adds to the public VP total.
     ///
-    /// Revealing uses the player's one development-card action for the turn,
-    /// matching how every other development card is played.
+    /// Revealing is a free action per the official rules: it does not use the
+    /// player's one development-card play for the turn, so the owner may reveal
+    /// a VP card and still play another development card in either order, and
+    /// may reveal more than one hidden VP card in the same turn. Cards bought
+    /// this turn live in `new_dev_cards` and stay unrevealable until next turn.
     fn reveal_victory_point(&mut self, actor: PlayerId) -> RuleResult {
         self.require_play_turn(actor)?;
-        if self.played_dev_this_turn {
-            return Err(RuleError::new("Only one development card per turn"));
-        }
         let Some(pos) = self.players[actor]
             .dev_cards
             .iter()
@@ -488,13 +488,14 @@ impl GameState {
         };
         self.players[actor].dev_cards.remove(pos);
         self.players[actor].revealed_vp += 1;
-        self.played_dev_this_turn = true;
         let name = self.players[actor].name.clone();
         let public = self.public_victory_points(actor);
         self.push_log(
             Some(actor),
             format!("{name} reveals a Victory Point card ({public} public VP)."),
         );
+        // Revealing adds public VP, so it can be the move that reaches 10.
+        self.check_winner();
         Ok(())
     }
 

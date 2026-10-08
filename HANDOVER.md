@@ -117,7 +117,9 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
 - **Dev cards**: `dev_cards` = playable, `new_dev_cards` = bought this turn (moved over in
   `end_turn`). One non-VP dev card per turn (`played_dev_this_turn`). Victory Point cards
   stay hidden (private) until the owner reveals one with the `RevealVictoryPoint` action;
-  a revealed card is added to `Player::revealed_vp` and counts in
+  revealing is a **free action** that does not use `played_dev_this_turn`, so a player may
+  reveal (even several) and still play another dev card in either order. A revealed card is
+  added to `Player::revealed_vp` and counts in
   `public_victory_points`. A still-hidden VP card is excluded from the public total but
   still counts in `total_victory_points`, so 9 public VP + a hidden VP card wins at 10.
 - **Longest Road**: DFS longest trail over a player's edges; an opponent's building blocks

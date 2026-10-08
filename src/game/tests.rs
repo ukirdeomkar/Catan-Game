@@ -768,10 +768,55 @@ fn revealing_a_victory_point_card_makes_it_public() {
     );
     assert_eq!(s.total_victory_points(0), base + 1);
 
-    // Revealing is that turn's development-card action.
+    // Revealing is a free action: it does not consume the dev-card play, so a
+    // second hidden VP card can also be revealed in the same turn.
+    assert!(
+        !s.played_dev_this_turn,
+        "revealing must not use the development-card action"
+    );
     s.players[0].dev_cards = vec![DevCard::VictoryPoint];
-    assert!(s.apply(0, &Action::RevealVictoryPoint).is_err());
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
+    assert_eq!(s.players[0].revealed_vp, 2);
+    assert_eq!(s.public_victory_points(0), base + 2);
+}
+
+#[test]
+fn revealing_a_victory_point_card_is_a_free_action() {
+    // Reveal first, then play a Knight in the same turn.
+    let mut s = fresh(2, 72);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint, DevCard::Knight];
+
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
     assert_eq!(s.players[0].revealed_vp, 1);
+    assert!(!s.played_dev_this_turn, "revealing does not use the dev action");
+    s.apply(0, &Action::PlayKnight).unwrap();
+    assert!(s.played_dev_this_turn, "the Knight uses the dev action");
+
+    // Play a Knight first (and finish its robber move), then still reveal a VP
+    // card in the same turn.
+    let mut s = fresh(2, 73);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint, DevCard::Knight];
+
+    s.apply(0, &Action::PlayKnight).unwrap();
+    assert!(s.played_dev_this_turn);
+    let hex = (0..s.board.hexes.len())
+        .find(|&h| h != s.robber_hex)
+        .unwrap();
+    s.apply(0, &Action::MoveRobber { hex }).unwrap();
+    if matches!(s.phase, Phase::Steal { .. }) {
+        s.apply(0, &Action::StealFrom { player: None }).unwrap();
+    }
+    assert!(matches!(s.phase, Phase::Play));
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
+    assert_eq!(s.players[0].revealed_vp, 1, "reveal works after a dev card");
 }
 
 #[test]
