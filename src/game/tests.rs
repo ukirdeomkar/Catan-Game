@@ -743,6 +743,98 @@ fn nine_public_points_plus_a_hidden_card_is_a_win_at_ten() {
 }
 
 #[test]
+fn revealing_a_victory_point_card_makes_it_public() {
+    let mut s = fresh(2, 70);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint];
+    let base = s.public_victory_points(0);
+
+    // A hidden VP card stays out of the public total but still counts toward
+    // the total used for the win check.
+    assert_eq!(s.public_victory_points(0), base);
+    assert_eq!(s.total_victory_points(0), base + 1);
+
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
+
+    assert_eq!(s.players[0].revealed_vp, 1, "the card is now revealed");
+    assert!(s.players[0].dev_cards.is_empty(), "the card left the hand");
+    assert_eq!(
+        s.public_victory_points(0),
+        base + 1,
+        "a revealed VP card is public"
+    );
+    assert_eq!(s.total_victory_points(0), base + 1);
+
+    // Revealing is a free action: it does not consume the dev-card play, so a
+    // second hidden VP card can also be revealed in the same turn.
+    assert!(
+        !s.played_dev_this_turn,
+        "revealing must not use the development-card action"
+    );
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint];
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
+    assert_eq!(s.players[0].revealed_vp, 2);
+    assert_eq!(s.public_victory_points(0), base + 2);
+}
+
+#[test]
+fn revealing_a_victory_point_card_is_a_free_action() {
+    // Reveal first, then play a Knight in the same turn.
+    let mut s = fresh(2, 72);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint, DevCard::Knight];
+
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
+    assert_eq!(s.players[0].revealed_vp, 1);
+    assert!(!s.played_dev_this_turn, "revealing does not use the dev action");
+    s.apply(0, &Action::PlayKnight).unwrap();
+    assert!(s.played_dev_this_turn, "the Knight uses the dev action");
+
+    // Play a Knight first (and finish its robber move), then still reveal a VP
+    // card in the same turn.
+    let mut s = fresh(2, 73);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].dev_cards = vec![DevCard::VictoryPoint, DevCard::Knight];
+
+    s.apply(0, &Action::PlayKnight).unwrap();
+    assert!(s.played_dev_this_turn);
+    let hex = (0..s.board.hexes.len())
+        .find(|&h| h != s.robber_hex)
+        .unwrap();
+    s.apply(0, &Action::MoveRobber { hex }).unwrap();
+    if matches!(s.phase, Phase::Steal { .. }) {
+        s.apply(0, &Action::StealFrom { player: None }).unwrap();
+    }
+    assert!(matches!(s.phase, Phase::Play));
+    s.apply(0, &Action::RevealVictoryPoint).unwrap();
+    assert_eq!(s.players[0].revealed_vp, 1, "reveal works after a dev card");
+}
+
+#[test]
+fn cannot_reveal_a_victory_point_card_bought_this_turn() {
+    let mut s = fresh(2, 71);
+    auto_setup(&mut s);
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+    s.players[0].new_dev_cards = vec![DevCard::VictoryPoint];
+    assert!(
+        s.apply(0, &Action::RevealVictoryPoint).is_err(),
+        "a card bought this turn is not playable until the next turn"
+    );
+    assert_eq!(s.players[0].revealed_vp, 0);
+}
+
+#[test]
 fn robbing_a_bot_builds_a_grudge() {
     let mut s = fresh(2, 60);
     auto_setup(&mut s);
@@ -758,4 +850,53 @@ fn robbing_a_bot_builds_a_grudge() {
     // The grudge fades as the bot plays its own turns.
     s.decay_anger(1);
     assert_eq!(s.anger(1, 0), 0, "grudges cool off over turns");
+}
+
+#[test]
+fn playing_the_largest_army_knight_completes_a_hidden_card_win() {
+    let mut s = fresh(2, 80);
+    auto_setup(&mut s);
+    // Rebuild player 0's board as 3 cities + 1 settlement = 7 public VP.
+    for v in s.board.vertices.iter_mut() {
+        v.owner = None;
+        v.building = Building::None;
+    }
+    s.players[0].cities_left = 3;
+    s.players[0].settlements_left = 1;
+    let mut built = 0;
+    for v in 0..s.board.vertices.len() {
+        if built < 3 && s.board.vertices[v].building == Building::None {
+            s.place_building(0, v, Building::City);
+            built += 1;
+        }
+    }
+    let sv = (0..s.board.vertices.len())
+        .find(|&v| s.board.vertices[v].building == Building::None)
+        .unwrap();
+    s.place_building(0, sv, Building::Settlement);
+    assert_eq!(s.public_victory_points(0), 7);
+
+    // Two knights already played plus one hidden VP card: the third knight's
+    // Largest Army (+2) brings public 9 and the hidden card completes 10.
+    s.players[0].played_knights = 2;
+    s.players[0].dev_cards = vec![DevCard::Knight, DevCard::VictoryPoint];
+    s.current = 0;
+    s.dice = Some((1, 1));
+    s.played_dev_this_turn = false;
+
+    s.apply(0, &Action::PlayKnight).unwrap();
+
+    assert_eq!(s.largest_army, Some(0));
+    assert_eq!(s.public_victory_points(0), 9, "Largest Army is public");
+    assert_eq!(
+        s.total_victory_points(0),
+        10,
+        "a hidden VP card still counts for the win"
+    );
+    assert_eq!(
+        s.winner,
+        Some(0),
+        "the win must be detected the moment Largest Army completes it"
+    );
+    assert!(s.is_over());
 }

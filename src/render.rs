@@ -679,7 +679,12 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
     let need_steal = my && matches!(game.phase, Phase::Steal { .. });
 
     let can_trade = my_play && p.resources.total() > 0 && game.trade.is_none();
-    let has_dev = my_play && !game.played_dev_this_turn && !p.dev_cards.is_empty();
+    // The development sheet is reachable when the player can play a card, or
+    // when they still hold a hidden Victory Point card: revealing is a free
+    // action, so it stays available even after another dev card was played.
+    let has_hidden_vp = p.dev_cards.contains(&DevCard::VictoryPoint);
+    let has_dev =
+        my_play && ((!game.played_dev_this_turn && !p.dev_cards.is_empty()) || has_hidden_vp);
     let rolled = game.dice.is_some();
 
     html! {
@@ -815,6 +820,11 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                 div.grow {}
                 button.sheet-close type="button" data-sheet-close { (ic("x")) }
             }
+            @if game.played_dev_this_turn {
+                p.muted.small style="margin:6px 2px 0" {
+                    "You already played a development card this turn. You can still reveal a Victory Point card."
+                }
+            }
             @if has(DevCard::Knight) {
                 div.devrow {
                     div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::Knight))) { (ic("shield")) }
@@ -822,7 +832,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                         div.dev-name { "Knight" }
                         div.dev-desc { (DevCard::Knight.description()) }
                     }
-                    button.dockbtn hx-post=(url) hx-vals=(r#"{"action":"play_knight"}"#) title="Play Knight" { (ic("play")) }
+                    button.dockbtn disabled[game.played_dev_this_turn] hx-post=(url) hx-vals=(r#"{"action":"play_knight"}"#) title="Play Knight" { (ic("play")) }
                 }
             }
             @if has(DevCard::RoadBuilding) {
@@ -836,7 +846,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                             div.dev-note { "No legal place to put a road right now." }
                         }
                     }
-                    button.dockbtn disabled[!road_ok] hx-post=(url) hx-vals=(r#"{"action":"play_road_building"}"#) title="Play Road Building" { (ic("play")) }
+                    button.dockbtn disabled[!road_ok || game.played_dev_this_turn] hx-post=(url) hx-vals=(r#"{"action":"play_road_building"}"#) title="Play Road Building" { (ic("play")) }
                 }
             }
             @if has(DevCard::YearOfPlenty) {
@@ -853,7 +863,7 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                             select name="second" title="Second resource" {
                                 @for r in ALL_RESOURCES { option value=(r.slug()) { (r.name()) } }
                             }
-                            button.dockbtn type="submit" title="Play" { (ic("play")) }
+                            button.dockbtn disabled[game.played_dev_this_turn] type="submit" title="Play" { (ic("play")) }
                         }
                     }
                 }
@@ -869,31 +879,40 @@ fn dev_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> Ma
                             select name="resource" title="Resource" {
                                 @for r in ALL_RESOURCES { option value=(r.slug()) { (r.name()) } }
                             }
-                            button.dockbtn type="submit" title="Play" { (ic("play")) }
+                            button.dockbtn disabled[game.played_dev_this_turn] type="submit" title="Play" { (ic("play")) }
                         }
                     }
                 }
             }
-            @let vp_playable = p
+            @let vp_hidden = p
                 .dev_cards
                 .iter()
                 .filter(|c| **c == DevCard::VictoryPoint)
                 .count();
-            @if vp_playable > 0 {
+            @let vp_revealed = p.revealed_vp as usize;
+            @if vp_hidden > 0 || vp_revealed > 0 {
                 div.devrow {
                     div.dev-ic.art[board] style=(format!("--card:url({})", dev_card_art(DevCard::VictoryPoint))) { (ic("trophy")) }
                     div.dev-body {
                         div.dev-name {
                             "Victory Point"
-                            @if vp_playable > 1 { " ×" (vp_playable) }
+                            @if vp_hidden + vp_revealed > 1 { " ×" (vp_hidden + vp_revealed) }
                         }
-                        div.dev-desc {
-                            "Worth " (vp_playable) " victory point"
-                            @if vp_playable > 1 { "s" }
-                            ". Counted automatically — no need to play."
+                        @if vp_revealed > 0 {
+                            div.dev-desc { (vp_revealed) " revealed — visible to everyone." }
+                        }
+                        @if vp_hidden > 0 {
+                            div.dev-desc {
+                                "Hidden. Reveal " @if vp_hidden > 1 { "one of these" } @else { "it" }
+                                " to show the point publicly. It still counts automatically if it would win the game."
+                            }
                         }
                     }
-                    span.dev-auto { "Auto" }
+                    @if vp_hidden > 0 {
+                        button.dockbtn hx-post=(url) hx-vals=(r#"{"action":"reveal_vp"}"#) title="Reveal a Victory Point card" { (ic("play")) }
+                    } @else {
+                        span.dev-auto { "Revealed" }
+                    }
                 }
             }
             @if !p.new_dev_cards.is_empty() {

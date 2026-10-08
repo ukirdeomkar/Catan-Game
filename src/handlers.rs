@@ -416,6 +416,7 @@ fn parse_action(
         "play_monopoly" => Action::PlayMonopoly {
             resource: resource("resource")?,
         },
+        "reveal_vp" => Action::RevealVictoryPoint,
         "move_robber" => Action::MoveRobber { hex: num("hex")? },
         "steal" => {
             let p = get("player");

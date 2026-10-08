@@ -40,6 +40,8 @@ pub enum Action {
     PlayRoadBuilding,
     PlayYearOfPlenty { first: Resource, second: Resource },
     PlayMonopoly { resource: Resource },
+    /// Reveal a previously bought Victory Point card so everyone can see it.
+    RevealVictoryPoint,
 
     // --- Robber flow ---
     MoveRobber { hex: usize },
@@ -77,6 +79,7 @@ impl GameState {
                 self.play_year_of_plenty(actor, *first, *second)
             }
             Action::PlayMonopoly { resource } => self.play_monopoly(actor, *resource),
+            Action::RevealVictoryPoint => self.reveal_victory_point(actor),
             Action::MoveRobber { hex } => self.move_robber(actor, *hex),
             Action::StealFrom { player } => self.steal_from(actor, *player),
             Action::Discard { resources } => self.discard(actor, *resources),
@@ -363,6 +366,10 @@ impl GameState {
         let name = self.players[actor].name.clone();
         self.push_log(Some(actor), format!("{name} plays a Knight."));
         self.phase = Phase::MoveRobber { after_knight: true };
+        // Largest Army can be the point that reaches 10, so a Knight must run
+        // the win check just like a build does. Run it after the phase move so
+        // a win overwrites MoveRobber with GameOver.
+        self.check_winner();
         Ok(())
     }
 
@@ -456,6 +463,39 @@ impl GameState {
                 resource.name()
             ),
         );
+        Ok(())
+    }
+
+    /// Reveal a Victory Point card bought on an earlier turn. Until revealed a
+    /// VP card is hidden (still private, but it counts toward the owner's total
+    /// for the win check); once revealed it adds to the public VP total.
+    ///
+    /// Revealing is a free action per the official rules: it does not use the
+    /// player's one development-card play for the turn, so the owner may reveal
+    /// a VP card and still play another development card in either order, and
+    /// may reveal more than one hidden VP card in the same turn. Cards bought
+    /// this turn live in `new_dev_cards` and stay unrevealable until next turn.
+    fn reveal_victory_point(&mut self, actor: PlayerId) -> RuleResult {
+        self.require_play_turn(actor)?;
+        let Some(pos) = self.players[actor]
+            .dev_cards
+            .iter()
+            .position(|c| *c == DevCard::VictoryPoint)
+        else {
+            return Err(RuleError::new(
+                "You have no victory point card to reveal this turn",
+            ));
+        };
+        self.players[actor].dev_cards.remove(pos);
+        self.players[actor].revealed_vp += 1;
+        let name = self.players[actor].name.clone();
+        let public = self.public_victory_points(actor);
+        self.push_log(
+            Some(actor),
+            format!("{name} reveals a Victory Point card ({public} public VP)."),
+        );
+        // Revealing adds public VP, so it can be the move that reaches 10.
+        self.check_winner();
         Ok(())
     }
 
