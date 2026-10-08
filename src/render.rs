@@ -295,8 +295,6 @@ pub fn home_page(error: Option<&str>) -> Markup {
     shell("Play Catanou", html! {
         div.wrap.page {
             div.hero {
-                img src="/static/branding/logo-128.webp" alt="Play Catanou logo" width="78" height="78";
-                h1 { "Play Catanou" }
                 p.muted { "The classic game of Catan, online with friends." }
             }
             @if let Some(e) = error { div.card #toasts { (e) } }
