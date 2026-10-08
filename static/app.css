@@ -364,3 +364,9 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .beat-list{margin:0;padding-left:18px;font-size:14px;line-height:1.5}
 .beat-list li{margin-bottom:4px}
 .beat-list li:last-child{margin-bottom:0}
+/* Build-guide rows sit on the dark how-to-play cards here, but the shared
+   .guide-icon colour (#11527d) is tuned for the light in-game build sheet.
+   Lighten the icon/name and divider only on the .howto surface. */
+.howto .guide-icon{color:#eaf3fb}
+.howto .guide-name{color:#f2f7fb}
+.howto .guide-row{border-bottom-color:#ffffff1f}
