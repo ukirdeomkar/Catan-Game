@@ -370,3 +370,13 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .howto .guide-icon{color:#eaf3fb}
 .howto .guide-name{color:#f2f7fb}
 .howto .guide-row{border-bottom-color:#ffffff1f}
+
+/* --- Pause: creation option + blinded paused screen --- */
+body:not(.game) .check{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px;font-weight:700;color:#e8f2fa;cursor:pointer}
+body:not(.game) .check input{width:18px;height:18px;accent-color:#2e7dd1}
+.pause-screen{width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:16px}
+.pause-card{max-width:340px;text-align:center}
+.pause-card .pause-ic .ic{width:42px;height:42px;color:#ffd84d}
+.pause-card h2{margin:10px 0 6px;font-size:22px;font-weight:900}
+.pause-card p{margin:6px 0}
+.pause-card .btn{margin-top:14px}

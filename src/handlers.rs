@@ -30,6 +30,8 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/mode", post(set_mode))
         .route("/room/{code}/layout", post(set_layout))
         .route("/room/{code}/start", post(start))
+        .route("/room/{code}/pause", post(pause))
+        .route("/room/{code}/resume", post(resume))
         .route("/room/{code}/add_bot", post(add_bot))
         .route("/healthz", get(|| async { "ok" }))
         // Served from the root so the worker's scope covers the whole origin.
@@ -91,6 +93,10 @@ struct NameForm {
     name: String,
     #[serde(default)]
     turn_seconds: u64,
+    /// Present (value "on") only when the create form's checkbox is checked;
+    /// unset means the room does not allow pausing.
+    #[serde(default)]
+    allow_pause: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -106,7 +112,8 @@ async fn create(State(app): State<Arc<AppState>>, Form(form): Form<NameForm>) ->
         60 | 180 | 300 | 600 => form.turn_seconds,
         _ => 180,
     };
-    match app.create_room(form.name, turn_seconds) {
+    let allow_pause = form.allow_pause.is_some();
+    match app.create_room(form.name, turn_seconds, allow_pause) {
         Ok((room, token)) => {
             let code = crate::state::room_code(&room);
             let (h, v) = set_cookie_header(&code, &token);
@@ -295,6 +302,11 @@ async fn action(
         data.members[v].last_seen_ms = now_ms();
         if data.game.is_none() {
             return toast("The game has not started yet.");
+        }
+        // A paused room rejects every game action, so a client holding a stale
+        // (pre-pause) fragment cannot mutate state while blinded.
+        if data.paused {
+            return toast("The game is paused.");
         }
         let mode = data.members[v].mode;
         let game = data.game.as_mut().unwrap();
@@ -568,6 +580,43 @@ async fn start(
     match app.start_game(&room, &token) {
         Ok(()) => Redirect::to(&format!("/room/{code}")).into_response(),
         Err(e) => Html(render::error_page(&e).into_string()).into_response(),
+    }
+}
+
+async fn pause(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return toast("Room not found.");
+    };
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return toast("Your session expired. Reload the page.");
+    };
+    match app.pause_room(&room, &token) {
+        // Room state changes ride the SSE stream; no body needed.
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(msg) => toast(&msg),
+    }
+}
+
+async fn resume(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return toast("Room not found.");
+    };
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return toast("Your session expired. Reload the page.");
+    };
+    match app.resume_room(&room, &token) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(msg) => toast(&msg),
     }
 }
 
