@@ -20,6 +20,7 @@ use tokio_stream::wrappers::WatchStream;
 pub fn router(app: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(home))
+        .route("/how-to-play", get(how_to_play))
         .route("/create", post(create))
         .route("/join", post(join))
         .route("/room/{code}", get(room_page))
@@ -78,6 +79,10 @@ fn set_cookie_header(code: &str, token: &str) -> (header::HeaderName, String) {
 
 async fn home() -> Html<String> {
     Html(render::home_page(None).into_string())
+}
+
+async fn how_to_play() -> Html<String> {
+    Html(render::how_to_play_page().into_string())
 }
 
 #[derive(serde::Deserialize)]

@@ -298,6 +298,11 @@ pub fn home_page(error: Option<&str>) -> Markup {
                 p.muted { "The classic game of Catan, online with friends." }
             }
             @if let Some(e) = error { div.card #toasts { (e) } }
+            div.card.howto-cta {
+                h3 { (ic("info")) "New to Catan?" }
+                p.muted style="margin:0 0 10px" { "Read the quick guide before your first game." }
+                a.btn.sec href="/how-to-play" { (ic("info")) "How to play" }
+            }
             div.card {
                 h3 { (ic("play")) "Create a new game" }
                 form method="post" action="/create" {
@@ -333,6 +338,118 @@ pub fn home_page(error: Option<&str>) -> Markup {
                     button.btn.sec type="submit" { "Join room" }
                 }
             }
+        }
+    })
+}
+
+/// Numbered heading for one how-to-play beat card.
+fn beat_head(n: u8, title: &str) -> Markup {
+    html! {
+        div.beat-head {
+            span.beat-num { (n) }
+            h3 { (title) }
+        }
+    }
+}
+
+/// Static, scrollable "How to play" reference — one card per design beat 0–6.
+/// Reachable from the home screen and the in-game menu; needs no live game.
+/// Build costs come from the engine cost constants, never hard-coded copy.
+pub fn how_to_play_page() -> Markup {
+    shell("How to play", html! {
+        div.wrap.page.howto {
+            div.hero {
+                h1 { "How to play" }
+                p.muted { "A quick reference for Catan — from the first roll to 10 victory points." }
+            }
+
+            div.card.beat {
+                (beat_head(0, "Goal"))
+                p {
+                    "Settle the island of Catan. The first player to reach "
+                    b { "10 victory points" } " wins."
+                }
+                p.muted.small {
+                    "Points come from settlements and cities, plus 2 each for Longest Road "
+                    "(5+ connected roads) and Largest Army (3+ knights played)."
+                }
+            }
+
+            div.card.beat {
+                (beat_head(1, "The board"))
+                p { "Each hex is a terrain that produces one resource:" }
+                div.beat-chips {
+                    @for r in ALL_RESOURCES {
+                        span.chip { (res_glyph(r)) (r.name()) }
+                    }
+                }
+                p {
+                    "Every non-desert hex has a " b { "number token" } " (2–12). "
+                    "The small dots under the number are its " b { "pips" }
+                    " — more pips means that number is rolled more often."
+                }
+                p.muted.small {
+                    "When the dice total matches a hex's number, everyone with a building on that hex collects its resource."
+                }
+            }
+
+            div.card.beat {
+                (beat_head(2, "Your turn"))
+                p {
+                    "On your turn: roll the dice, collect resources, then build, trade, "
+                    "or buy cards. Tap " (ic("dice")) " Roll, and finish with "
+                    (ic("play")) " End turn."
+                }
+                p.muted.small {
+                    "You may build and trade before or after rolling, but you must roll before ending your turn."
+                }
+            }
+
+            div.card.beat {
+                (beat_head(3, "Build & costs"))
+                p {
+                    "Spend resources to build. Tap " (ic("build"))
+                    " Build, then place your piece on a highlighted spot or edge."
+                }
+                (build_guide())
+            }
+
+            div.card.beat {
+                (beat_head(4, "Resources & trading"))
+                p {
+                    "Hold resource cards in your hand. Trade with other players from the "
+                    (ic("trade")) " Trade sheet, or exchange with the bank at a fixed rate:"
+                }
+                ul.beat-list {
+                    li { "4 of one resource → 1 of any resource (no port)" }
+                    li { "3 of one resource → 1 of any resource (generic 3:1 port)" }
+                    li { "2 of one resource → 1 of that resource (matching 2:1 port)" }
+                }
+            }
+
+            div.card.beat {
+                (beat_head(5, "Development cards"))
+                p {
+                    "Buy one for " (cost_span(COST_DEV))
+                    " and play at most one per turn (a hidden Victory Point card can always be revealed)."
+                }
+                ul.beat-list {
+                    @for c in [DevCard::Knight, DevCard::RoadBuilding, DevCard::YearOfPlenty, DevCard::Monopoly, DevCard::VictoryPoint] {
+                        li { b { (c.name()) } " — " (c.description()) }
+                    }
+                }
+            }
+
+            div.card.beat {
+                (beat_head(6, "Winning"))
+                p {
+                    "The " (ic("trophy")) " badge on each player shows their public victory points. "
+                    "Grow your score with upgrades and bonuses — and win at "
+                    b { "10 victory points" } "."
+                }
+            }
+
+            p.howto-back { a.btn.sec href="/" { "Back to home" } }
         }
     })
 }
@@ -990,14 +1107,8 @@ fn menu_sheet(code: &str, data: &RoomData, game: &GameState, _viewer: Option<Pla
             h3 { "Build guide" }
             (build_guide())
             h3 style="margin-top:14px" { "How to play" }
-            ol.rules-list {
-                li { "Roll the dice to collect resources from hexes matching the number." }
-                li { "Build roads and settlements to expand; upgrade settlements to cities for double production." }
-                li { "Trade with other players or with the bank at your ports." }
-                li { "Play development cards for powerful one-off effects." }
-                li { "First to 10 victory points wins. Longest Road (5+) and Largest Army (3+ knights) are worth 2 each." }
-            }
-            h3 { "Log" }
+            a.btn.sec href="/how-to-play" { (ic("info")) "Open the how-to-play guide" }
+            h3 style="margin-top:14px" { "Log" }
             div #log.logbox sse-swap="log" { (log_frag(game)) }
             p.muted.small style="margin-top:12px" {
                 a href=(url) { "Refresh" }

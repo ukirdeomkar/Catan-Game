@@ -345,3 +345,28 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
  .pstrip .prow{gap:2px 4px;font-size:10px}
  .pstrip .pname{font-size:11px}
 }
+
+/* Tutorial / how-to-play */
+a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.howto-cta p{margin:0 0 10px}
+.howto .hero{margin-bottom:12px}
+.howto-back{margin:4px 0 20px;text-align:center}
+.beat-head{display:flex;align-items:center;gap:10px;margin:0 0 8px}
+.beat-head h3{margin:0}
+.beat-num{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:#2e7dd1;color:#fff;font-weight:900;font-size:13px;display:flex;align-items:center;justify-content:center}
+.beat p{margin:0 0 8px;font-size:14px;line-height:1.5}
+.beat p:last-child{margin-bottom:0}
+.beat .ic{display:inline-block;width:1.05em;height:1.05em;vertical-align:-3px}
+.beat .glyph{width:16px;height:16px}
+.beat .cost{flex-wrap:wrap}
+.beat-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.beat-chips .chip{display:inline-flex;align-items:center;gap:4px;background:#00000018;border-radius:999px;padding:3px 9px 3px 5px;font-size:12px;font-weight:700}
+.beat-list{margin:0;padding-left:18px;font-size:14px;line-height:1.5}
+.beat-list li{margin-bottom:4px}
+.beat-list li:last-child{margin-bottom:0}
+/* Build-guide rows sit on the dark how-to-play cards here, but the shared
+   .guide-icon colour (#11527d) is tuned for the light in-game build sheet.
+   Lighten the icon/name and divider only on the .howto surface. */
+.howto .guide-icon{color:#eaf3fb}
+.howto .guide-name{color:#f2f7fb}
+.howto .guide-row{border-bottom-color:#ffffff1f}
