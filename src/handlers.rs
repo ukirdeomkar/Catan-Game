@@ -34,6 +34,8 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/healthz", get(|| async { "ok" }))
         // Served from the root so the worker's scope covers the whole origin.
         .route("/sw.js", get(service_worker))
+        // Digital Asset Links for the Android TWA (see docs/PLAYSTORE-ANDROID.md).
+        .route("/.well-known/assetlinks.json", get(assetlinks))
         .nest_service("/static", tower_http::services::ServeDir::new("static"))
         .with_state(app)
 }
@@ -44,6 +46,49 @@ async fn service_worker() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         include_str!("../static/sw.js"),
+    )
+}
+
+/// Package name of the Android Trusted Web Activity (TWA) built with Bubblewrap.
+const ANDROID_PACKAGE_NAME: &str = "org.playcatanou.twa";
+
+/// SHA-256 fingerprint of the **local upload key** the release `.aab` is signed with.
+///
+/// This is what lets a locally-installed TWA verify `playcatanou.duckdns.org`.
+/// Once the bundle is uploaded to Play, the device verifies the installed app
+/// against the **Play App Signing** certificate instead, which has a different
+/// fingerprint (Play Console -> Test and release -> App integrity). After the
+/// first upload, set `CATAN_ANDROID_SHA256_FINGERPRINTS` (comma-separated) in the
+/// deployment environment to serve the Play App Signing fingerprint without a
+/// code change; the value below remains the fallback for local install testing.
+const DEFAULT_UPLOAD_KEY_SHA256: &str =
+    "B3:A7:69:04:97:60:66:AB:68:07:26:A3:2D:01:46:07:B0:2C:F0:40:81:9C:B1:13:AD:7B:50:A1:60:50:C3:59";
+
+/// Digital Asset Links statement that verifies the Android TWA against this origin.
+async fn assetlinks() -> impl IntoResponse {
+    let fingerprints: Vec<String> = std::env::var("CATAN_ANDROID_SHA256_FINGERPRINTS")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty())
+        .unwrap_or_else(|| vec![DEFAULT_UPLOAD_KEY_SHA256.to_string()]);
+
+    let statement = serde_json::json!([{
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {
+            "namespace": "android_app",
+            "package_name": ANDROID_PACKAGE_NAME,
+            "sha256_cert_fingerprints": fingerprints,
+        }
+    }]);
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        statement.to_string(),
     )
 }
 
