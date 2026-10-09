@@ -306,6 +306,7 @@ fn render_events(app: &AppState, code: &str, token: &str) -> Vec<Result<Event, I
         mk("hand", f.hand),
         mk("controls", f.controls),
         mk("trades", f.trades),
+        mk("trade_modal", f.trade_modal),
         mk("log", f.log),
         mk("turn", f.turn),
         // Any lobby viewer still waiting should drop into the game now.

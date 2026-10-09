@@ -568,6 +568,10 @@ pub struct Fragments {
     pub trades: Markup,
     pub log: Markup,
     pub turn: Markup,
+    /// Inner body of the trade sheet. Re-sent on every version bump so the
+    /// resource picker follows the viewer's live layout instead of the layout
+    /// that was active at page load.
+    pub trade_modal: Markup,
 }
 
 pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Fragments {
@@ -583,6 +587,7 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
         trades: trades_frag(game, &data.code, viewer),
         log: log_frag(game),
         turn: turn_frag(game, data, viewer),
+        trade_modal: viewer.map(|v| trade_modal(game, data, v)).unwrap_or_default(),
     }
 }
 
@@ -614,8 +619,8 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
                 a href="https://github.com/ukirdeomkar" target="_blank" rel="noopener" { "Omkar" }
             }
             (menu_sheet(code, data, game, viewer))
-            @if let Some(v) = viewer {
-                (trade_modal(game, data, v))
+            @if viewer.is_some() {
+                div #trade-modal.modal hidden sse-swap="trade_modal" { (f.trade_modal) }
             }
         }
     })
@@ -1121,43 +1126,43 @@ fn menu_sheet(code: &str, data: &RoomData, game: &GameState, _viewer: Option<Pla
 // Trade modal (bottom sheet)
 // ---------------------------------------------------------------------------
 
+/// Inner body of the trade sheet. The `#trade-modal` wrapper lives in
+/// [`game_page`] so the sheet keeps its `hidden` state across live swaps.
 fn trade_modal(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
     let url = format!("/room/{}/action", data.code);
     let p = &game.players[v];
     let layout = member_layout(data, v);
     html! {
-        div #trade-modal.modal hidden {
-            div.modal-card {
-                div.sheet-head {
-                    h3 { "Trade" }
-                    div.grow {}
-                    button.sheet-close type="button" data-close-trade title="Close" { (ic("x")) }
+        div.modal-card {
+            div.sheet-head {
+                h3 { "Trade" }
+                div.grow {}
+                button.sheet-close type="button" data-close-trade title="Close" { (ic("x")) }
+            }
+            p.muted.small { "Tap cards to build your offer. Shared with everyone — first to accept trades. Ends in 30s or when all decline." }
+            strong { "You give" }
+            div.picker { (pick_cards("give", Some(&p.resources), layout)) }
+            strong { "You want" }
+            div.picker { (pick_cards("want", None, layout)) }
+            p.muted.small style="margin:-8px 0 10px" {
+                "Tap a card to add it; tap it 5 times to cycle back to 0."
+            }
+            div.trade-preview {
+                span #preview-give { "—" }
+                span.arrow { "⇄" }
+                span #preview-want { "—" }
+            }
+            form #trade-form hx-post=(url) {
+                input type="hidden" name="action" value="propose_trade";
+                input type="hidden" name="give" value="";
+                input type="hidden" name="want" value="";
+                @for r in ALL_RESOURCES {
+                    input type="hidden" name=(format!("give_{}", r.slug())) value="0";
+                    input type="hidden" name=(format!("want_{}", r.slug())) value="0";
                 }
-                p.muted.small { "Tap cards to build your offer. Shared with everyone — first to accept trades. Ends in 30s or when all decline." }
-                strong { "You give" }
-                div.picker { (pick_cards("give", Some(&p.resources), layout)) }
-                strong { "You want" }
-                div.picker { (pick_cards("want", None, layout)) }
-                p.muted.small style="margin:-8px 0 10px" {
-                    "Tap a card to add it; tap it 5 times to cycle back to 0."
-                }
-                div.trade-preview {
-                    span #preview-give { "—" }
-                    span.arrow { "⇄" }
-                    span #preview-want { "—" }
-                }
-                form #trade-form hx-post=(url) {
-                    input type="hidden" name="action" value="propose_trade";
-                    input type="hidden" name="give" value="";
-                    input type="hidden" name="want" value="";
-                    @for r in ALL_RESOURCES {
-                        input type="hidden" name=(format!("give_{}", r.slug())) value="0";
-                        input type="hidden" name=(format!("want_{}", r.slug())) value="0";
-                    }
-                    div.row {
-                        button #offer-btn.btn.sheetbtn type="submit" title="Offer to all players" disabled { (ic("offer")) "Offer" }
-                        button #bank-btn.btn.sec.sheetbtn type="submit" title="Exchange with bank / port" disabled { (ic("swap")) "Bank" }
-                    }
+                div.row {
+                    button #offer-btn.btn.sheetbtn type="submit" title="Offer to all players" disabled { (ic("offer")) "Offer" }
+                    button #bank-btn.btn.sec.sheetbtn type="submit" title="Exchange with bank / port" disabled { (ic("swap")) "Bank" }
                 }
             }
         }
