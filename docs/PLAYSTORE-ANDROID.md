@@ -12,10 +12,15 @@ The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org`
 | Host | `playcatanou.duckdns.org` |
 | `versionCode` | `1` |
 | `versionName` | `1.0.0` |
-| `minSdkVersion` | 21 |
+| `minSdkVersion` | 24 |
 | `targetSdkVersion` | 36 (set by the Bubblewrap/AGP template) |
 | Keystore alias | `catanou-upload` |
 | Keystore store type | `JKS` |
+
+`minSdkVersion` is **24**, not the Bubblewrap template default of 21: Play's automatic
+protection rejects any bundle below API 24 ("Play automatic protection requires a minimum
+SDK version of 24 or higher"). Older devices below API 24 are therefore out of scope for
+the Play Store listing.
 
 The package name is the CEO decision recorded for issue #14 and is used consistently in
 the Bubblewrap manifest, `assetlinks.json`, and this doc. It must not change after the
@@ -65,7 +70,8 @@ Bubblewrap generates the Android project from `twa-manifest.json`. To start a fr
 ```bash
 npx @bubblewrap/cli init \
   --manifest https://playcatanou.duckdns.org/static/branding/site.webmanifest
-# edit twa-manifest.json: packageId org.playcatanou.twa, signingKey path/alias, versions
+# edit twa-manifest.json: packageId org.playcatanou.twa, signingKey path/alias,
+# minSdkVersion 24 (Play requires >= 24), versions
 npx @bubblewrap/cli build
 ```
 
