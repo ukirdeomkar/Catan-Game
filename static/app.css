@@ -12,7 +12,7 @@ code{background:#0f151b;color:#e9eef2;padding:1px 6px;border-radius:5px}
 
 /* Home / lobby / join / error share the game's blue ocean theme so the whole
    app reads as one product instead of a dark landing page plus a blue game. */
-body:not(.game){min-height:100vh;display:flex;flex-direction:column;color:#f2f7fb;background-color:#0e5c8e;background-image:linear-gradient(rgba(7,45,71,.60),rgba(5,33,53,.82)),url('/static/board/ocean.webp');background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed}
+body:not(.game){min-height:100vh;display:flex;flex-direction:column;color:#f2f7fb;background-color:#0e5c8e;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);background-image:linear-gradient(rgba(7,45,71,.60),rgba(5,33,53,.82)),url('/static/board/ocean.webp');background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed}
 body:not(.game)>.wrap{flex:1 0 auto}
 /* Centered single-column layout for the option screens (fixes the "content
    stretches weirdly across a wide page" look). */
@@ -296,9 +296,9 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
 .btn.sheetbtn{border-radius:12px;font-weight:800}
 
 /* Toasts + notifications */
-.toasts{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:72;max-width:calc(100% - 24px)}
+.toasts{position:fixed;left:50%;top:calc(10px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:72;max-width:calc(100% - 24px)}
 #toasts:not(:empty){background:#c0392b;color:#fff;border-radius:10px;padding:7px 14px;font-size:13px;font-weight:700;box-shadow:0 6px 20px #0005}
-.notif{position:fixed;left:50%;top:52px;transform:translateX(-50%);z-index:70;display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;width:calc(100% - 24px);max-width:460px}
+.notif{position:fixed;left:50%;top:calc(52px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:70;display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none;width:calc(100% - 24px);max-width:460px}
 .notif .note{background:#0b4d7cee;color:#fff;border-radius:10px;padding:8px 14px;font-size:13px;font-weight:700;box-shadow:0 8px 24px #0006;animation:notifin .18s ease-out}
 @keyframes notifin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 

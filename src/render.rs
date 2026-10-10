@@ -216,7 +216,12 @@ fn head_common(title: &str) -> Markup {
     html! {
         head {
             meta charset="utf-8";
-            meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no";
+            // `viewport-fit=cover` is required for the `env(safe-area-inset-*)`
+            // values used below to be non-zero. Without it, an installed TWA on
+            // Android lays the page out against the system-bar insets while touch
+            // hit-testing uses the full screen, so every tap lands slightly
+            // down-right of the finger. In a browser tab the tag is a no-op.
+            meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
             meta name="theme-color" content="#1470a8";
             meta name="description" content="The classic game of Catan, now online to play with your friends.";
             meta property="og:title" content="Play Catanou";
