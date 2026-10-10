@@ -52,17 +52,22 @@ async fn service_worker() -> impl IntoResponse {
 /// Package name of the Android Trusted Web Activity (TWA) built with Bubblewrap.
 const ANDROID_PACKAGE_NAME: &str = "org.playcatanou.twa";
 
-/// SHA-256 fingerprint of the **local upload key** the release `.aab` is signed with.
+/// SHA-256 fingerprints accepted for the Android TWA `org.playcatanou.twa`.
 ///
-/// This is what lets a locally-installed TWA verify `playcatanou.duckdns.org`.
-/// Once the bundle is uploaded to Play, the device verifies the installed app
-/// against the **Play App Signing** certificate instead, which has a different
-/// fingerprint (Play Console -> Test and release -> App integrity). After the
-/// first upload, set `CATAN_ANDROID_SHA256_FINGERPRINTS` (comma-separated) in the
-/// deployment environment to serve the Play App Signing fingerprint without a
-/// code change; the value below remains the fallback for local install testing.
-const DEFAULT_UPLOAD_KEY_SHA256: &str =
-    "B3:A7:69:04:97:60:66:AB:68:07:26:A3:2D:01:46:07:B0:2C:F0:40:81:9C:B1:13:AD:7B:50:A1:60:50:C3:59";
+/// Both are published so the app verifies regardless of how it was installed:
+/// - the **upload key** that signs our release `.aab` (used for local/side-loaded
+///   install testing), and
+/// - the **Play App Signing** certificate that Play re-signs the delivered app
+///   with (what devices actually see for a Play install; Play Console ->
+///   Test and release -> App integrity -> App signing key certificate).
+///
+/// Override at runtime with the comma-separated `CATAN_ANDROID_SHA256_FINGERPRINTS`
+/// environment variable (it replaces this list), e.g. to rotate the Play
+/// certificate without a code change.
+const DEFAULT_SHA256_FINGERPRINTS: &[&str] = &[
+    "B3:A7:69:04:97:60:66:AB:68:07:26:A3:2D:01:46:07:B0:2C:F0:40:81:9C:B1:13:AD:7B:50:A1:60:50:C3:59",
+    "F2:62:F8:12:66:14:0E:4B:97:29:DF:62:7D:41:BD:3D:41:28:BF:D8:9A:ED:FA:2C:C8:5B:71:65:51:43:9C:ED",
+];
 
 /// Digital Asset Links statement that verifies the Android TWA against this origin.
 async fn assetlinks() -> impl IntoResponse {
@@ -76,7 +81,12 @@ async fn assetlinks() -> impl IntoResponse {
                 .collect()
         })
         .filter(|v: &Vec<String>| !v.is_empty())
-        .unwrap_or_else(|| vec![DEFAULT_UPLOAD_KEY_SHA256.to_string()]);
+        .unwrap_or_else(|| {
+            DEFAULT_SHA256_FINGERPRINTS
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        });
 
     let statement = serde_json::json!([{
         "relation": ["delegate_permission/common.handle_all_urls"],
