@@ -45,17 +45,21 @@ B3:A7:69:04:97:60:66:AB:68:07:26:A3:2D:01:46:07:B0:2C:F0:40:81:9C:B1:13:AD:7B:50
 
 When the `.aab` is uploaded to Play, Google re-signs the delivered APK with a **Play App
 Signing** key. Devices therefore verify the app against the **Play App Signing**
-certificate, not the local upload key. After the first upload, read that SHA-256 from the
-Play Console (**Test and release → App integrity → App signing key certificate**) and use
-it for `assetlinks.json` instead of the upload-key fingerprint above.
+certificate, not the local upload key. The board supplied this value (OMK-44); the Play
+Console shows it under **Test and release → App integrity → App signing key certificate**:
+
+```
+F2:62:F8:12:66:14:0E:4B:97:29:DF:62:7D:41:BD:3D:41:28:BF:D8:9A:ED:FA:2C:C8:5B:71:65:51:43:9C:ED
+```
 
 ## Digital Asset Links
 
 The server serves `/.well-known/assetlinks.json` from `src/handlers.rs` with the package
-name above. The default fingerprint is the local upload key. To switch to the Play App
-Signing fingerprint after the first upload, either edit `DEFAULT_UPLOAD_KEY_SHA256` or set
-the deployment environment variable `CATAN_ANDROID_SHA256_FINGERPRINTS` (comma-separated
-for multiple certs) — no code change required.
+name above. `DEFAULT_SHA256_FINGERPRINTS` lists **both** certificates — the local upload
+key (for side-loaded builds) and the Play App Signing certificate (for Play installs) — so
+the app verifies either way. Override the list at runtime with the comma-separated
+`CATAN_ANDROID_SHA256_FINGERPRINTS` environment variable; no code change is needed to
+rotate a certificate.
 
 Verify with:
 
