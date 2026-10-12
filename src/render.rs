@@ -296,41 +296,84 @@ fn shell_game(title: &str, body: Markup) -> Markup {
 // Public pages
 // ---------------------------------------------------------------------------
 
-pub fn home_page(error: Option<&str>) -> Markup {
+/// Landing menu: exactly three clear choices, so a new player can get started
+/// without scanning a page full of forms.
+pub fn home_page() -> Markup {
     shell("Play Catanou", html! {
         div.wrap.page {
             div.hero {
                 p.muted { "The classic game of Catan, online with friends." }
             }
+            nav.card.menu aria-label="Main menu" {
+                a.btn href="/create" {
+                    (ic("build"))
+                    span.menu-txt {
+                        span.m1 { "Create room" }
+                        span.m2 { "Start a new game and invite friends" }
+                    }
+                }
+                a.btn.sec href="/join" {
+                    (ic("users"))
+                    span.menu-txt {
+                        span.m1 { "Join room" }
+                        span.m2 { "Enter a room code" }
+                    }
+                }
+                a.btn.sec href="/how-to-play" {
+                    (ic("info"))
+                    span.menu-txt {
+                        span.m1 { "How to play" }
+                        span.m2 { "Learn the rules in 2 minutes" }
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Create-room screen: one short form, so the only thing to decide is a name
+/// (turn length keeps a single sensible default).
+pub fn create_page(error: Option<&str>) -> Markup {
+    shell("Create room", html! {
+        div.wrap.page {
             @if let Some(e) = error { div.card #toasts { (e) } }
-            div.card.howto-cta {
-                h3 { (ic("info")) "New to Catan?" }
-                p.muted style="margin:0 0 10px" { "Read the quick guide before your first game." }
-                a.btn.sec href="/how-to-play" { (ic("info")) "How to play" }
+            div.hero {
+                h1 { "Create room" }
+                p.muted { "Name your game, then share the room code." }
             }
             div.card {
-                h3 { (ic("play")) "Create a new game" }
                 form method="post" action="/create" {
                     label.field {
                         span { "Your name" }
                         input type="text" name="name" placeholder="Max 5 characters" maxlength="5";
                     }
-                    div.formrow {
-                        label.field {
-                            span { "Turn length" }
-                            select name="turn_seconds" {
-                                option value="60" { "1 min" }
-                                option value="180" selected { "3 min" }
-                                option value="300" { "5 min" }
-                                option value="600" { "10 min" }
-                            }
+                    label.field {
+                        span { "Turn length" }
+                        select name="turn_seconds" {
+                            option value="60" { "1 min" }
+                            option value="180" selected { "3 min" }
+                            option value="300" { "5 min" }
+                            option value="600" { "10 min" }
                         }
-                        button.btn type="submit" { "Create room" }
                     }
+                    button.btn type="submit" { "Create room" }
                 }
             }
+            p.page-back { a href="/" { "Back to home" } }
+        }
+    })
+}
+
+/// Join-by-code screen: the room code and a name, nothing else.
+pub fn join_room_page(error: Option<&str>) -> Markup {
+    shell("Join room", html! {
+        div.wrap.page {
+            @if let Some(e) = error { div.card #toasts { (e) } }
+            div.hero {
+                h1 { "Join room" }
+                p.muted { "Enter the room code a friend shared with you." }
+            }
             div.card {
-                h3 { (ic("users")) "Join a game" }
                 form method="post" action="/join" {
                     label.field {
                         span { "Room code" }
@@ -340,9 +383,10 @@ pub fn home_page(error: Option<&str>) -> Markup {
                         span { "Your name" }
                         input type="text" name="name" placeholder="Max 5 characters" maxlength="5";
                     }
-                    button.btn.sec type="submit" { "Join room" }
+                    button.btn type="submit" { "Join room" }
                 }
             }
+            p.page-back { a href="/" { "Back to home" } }
         }
     })
 }
