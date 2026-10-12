@@ -273,6 +273,8 @@ fn shell(title: &str, body: Markup) -> Markup {
                         span.fnote {
                             "Made with ♥ by "
                             a href="https://github.com/ukirdeomkar" target="_blank" rel="noopener" { "Omkar" }
+                            " · "
+                            a href="/privacy" { "Privacy" }
                         }
                     }
                 }
@@ -459,6 +461,143 @@ pub fn how_to_play_page() -> Markup {
     })
 }
 
+/// Public privacy policy for the **Play Catanou** app (`org.playcatanou.twa`)
+/// and the website it wraps. Required by the Google Play listing and must be
+/// reachable without an account or login. Plain server-rendered HTML — no
+/// JavaScript is needed to read it. See `docs/PRIVACY-POLICY.md` for the
+/// statement of record.
+pub fn privacy_page() -> Markup {
+    shell("Privacy Policy", html! {
+        div.wrap.page.policy {
+            div.hero {
+                h1 { "Privacy Policy" }
+                p.muted { "Play Catanou" }
+                p.policy-updated { "Last updated: 12 October 2026" }
+            }
+
+            div.card {
+                h3 { "1. Who this covers" }
+                p {
+                    "This policy describes how the "
+                    b { "Play Catanou" }
+                    " game handles information. It applies to the website at "
+                    a href="/" { "playcatanou.duckdns.org" }
+                    " and to the Android app "
+                    b { "Play Catanou" }
+                    " (package "
+                    code { "org.playcatanou.twa" }
+                    "), which is a Trusted Web Activity that displays that website."
+                }
+            }
+
+            div.card {
+                h3 { "2. What we collect" }
+                p {
+                    "We keep data collection to the minimum needed to play a multiplayer game. "
+                    "The app has " b { "no accounts, no sign-up, and no login" } "."
+                }
+                ul.policy-list {
+                    li {
+                        b { "Display name." }
+                        " When you create or join a game you type a short name (up to 5 characters). "
+                        "It is shown to the other players in that game. Do not enter your real name "
+                        "or anything you do not want other players to see."
+                    }
+                    li {
+                        b { "Session cookie." }
+                        " We set one first-party cookie named "
+                        code { "catan_<ROOMCODE>" }
+                        " holding a random token so the server knows which player you are in a "
+                        "particular room. It contains no personal information and is not used to "
+                        "track you across sites."
+                    }
+                    li {
+                        b { "Game state." }
+                        " The board layout, the names in the room, and the moves made are stored on "
+                        "our server so a game survives a page refresh and players can reconnect."
+                    }
+                }
+            }
+
+            div.card {
+                h3 { "3. What we do not collect" }
+                p { "The app does not use:" }
+                ul.policy-list {
+                    li { "Advertising, ad identifiers, or ad networks;" }
+                    li { "Analytics or crash-reporting SDKs, or any third-party tracking;" }
+                    li { "Your location, contacts, camera, microphone, or files;" }
+                    li { "Your email address, phone number, or any account credentials." }
+                }
+                p {
+                    "We do not sell or share your information, and we show no ads."
+                }
+            }
+
+            div.card {
+                h3 { "4. Data stored on your device" }
+                p {
+                    "Play Catanou is a Progressive Web App. Its service worker caches the app's own "
+                    "files (styles, images, and game code) in your browser cache so it loads quickly, "
+                    "and remembers a small preference for whether you dismissed the \u{201c}install app\u{201d} "
+                    "prompt. Clearing your browser's site data removes both at any time."
+                }
+            }
+
+            div.card {
+                h3 { "5. Retention" }
+                p {
+                    "Rooms are kept only while they are in use and are deleted automatically once "
+                    "they have been idle for 24 hours. We do not build long-term profiles of players."
+                }
+            }
+
+            div.card {
+                h3 { "6. Third parties" }
+                p {
+                    "The game runs on a self-hosted server; we use no third-party analytics or "
+                    "advertising services. If you install the app from " b { "Google Play" }
+                    ", Google may collect information under "
+                    a href="https://policies.google.com/privacy" target="_blank" rel="noopener" { "Google's own privacy policy" }
+                    "; that is between you and Google. Links out to external sites (for example the "
+                    "project's GitHub page) open only when you choose them and are governed by those "
+                    "sites' policies."
+                }
+            }
+
+            div.card {
+                h3 { "7. Children" }
+                p {
+                    "The game is not directed to children and we do not knowingly collect personal "
+                    "information from anyone. Because there are no accounts and no personal details "
+                    "are required, no personal information about a child is stored beyond the chosen "
+                    "display name, which is removed with the room."
+                }
+            }
+
+            div.card {
+                h3 { "8. Changes" }
+                p {
+                    "We may update this policy as the game changes. The date at the top of the page "
+                    "shows when it was last revised."
+                }
+            }
+
+            div.card {
+                h3 { "9. Contact" }
+                p {
+                    "Questions about this policy? Open an issue at "
+                    a href="https://github.com/ukirdeomkar/Catan-Game/issues" target="_blank" rel="noopener" {
+                        "github.com/ukirdeomkar/Catan-Game/issues"
+                    }
+                    "."
+                }
+            }
+
+            p.howto-back { a.btn.sec href="/" { "Back to home" } }
+        }
+    })
+}
+
 pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
     shell("Lobby", html! {
         div.wrap.page {
@@ -617,6 +756,8 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             footer.gamefoot {
                 "Made with ♥ by "
                 a href="https://github.com/ukirdeomkar" target="_blank" rel="noopener" { "Omkar" }
+                " · "
+                a href="/privacy" { "Privacy" }
             }
             (menu_sheet(code, data, game, viewer))
             @if let Some(v) = viewer {
