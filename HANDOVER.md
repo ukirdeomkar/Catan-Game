@@ -44,6 +44,53 @@ Environment:
 Deploy: `docker compose up -d --build`, or the systemd unit in `deploy/catan.service`
 (details in `README.md`).
 
+### 2.1 Staged preview for QA (Docker, no host toolchain)
+
+The build host has **no C compiler** (`linker 'cc' not found`), so a host `cargo build`
+or `cargo run` fails. Build and run staged previews in Docker instead — never assume
+`cc` exists.
+
+One command stages whatever branch you are on and prints the URL:
+
+```bash
+scripts/qa-staged.sh
+# ...
+# Staged and serving:
+#   URL:       http://127.0.0.1:3708/
+#   Image:     catan-staged:feat-30-simplify-home-ui
+#   Container: catan-staged-feat-30-simplify-home-ui
+#   Branch:    feat/30-simplify-home-ui @ 5f8e869
+```
+
+The script:
+
+1. `docker build -t catan-staged:<branch> .` in the current checkout.
+2. `docker run -d` on the **next free host port**, so two staged branches can run side by side.
+3. Waits until `/` answers, then prints the URL.
+
+**Port convention:** staged previews start at **3708** and count up. Existing precedent:
+`catan-pr23` → `:3706`, `catan-pr24` → `:3707`, `catan-pr31` → `:3708`. If 3708 is taken the
+script automatically uses the next free port and prints the one it chose.
+
+Override the defaults when needed:
+
+```bash
+scripts/qa-staged.sh --port 3800      # start searching from 3800
+scripts/qa-staged.sh --no-build       # reuse the image, just re-run it
+scripts/qa-staged.sh --name my-qa     # pick the container name
+QA_TIMEOUT=120 scripts/qa-staged.sh   # longer startup wait
+```
+
+Manual equivalent (what the script automates):
+
+```bash
+docker build -t catan-prNN:latest .
+docker run -d --name catan-prNN -p 3708:8080 catan-prNN:latest
+curl -s http://127.0.0.1:3708/
+```
+
+These URLs are **host-local**. Do not expose a public/external link without board approval.
+
 ---
 
 ## 3. Repository layout
