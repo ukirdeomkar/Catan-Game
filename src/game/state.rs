@@ -304,6 +304,24 @@ impl GameState {
         matches!(self.phase, Phase::GameOver)
     }
 
+    /// End the game with no winner — used when the room is abandoned mid-game
+    /// (a player leaves, or the host removes them). The board stays as it is
+    /// so everyone sees the final position; `winner` stays `None` so nobody is
+    /// credited with a victory.
+    pub fn abandon(&mut self, reason: impl Into<String>) {
+        if self.is_over() {
+            return;
+        }
+        self.phase = Phase::GameOver;
+        self.winner = None;
+        self.trade = None;
+        self.pending_discards.clear();
+        self.free_roads_left = 0;
+        self.year_of_plenty_left = 0;
+        self.steal_hex = None;
+        self.push_log(None, reason);
+    }
+
     pub fn robber_terrain(&self) -> crate::game::board::Terrain {
         self.board.hexes[self.robber_hex].terrain
     }

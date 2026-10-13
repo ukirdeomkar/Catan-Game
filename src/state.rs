@@ -55,6 +55,11 @@ pub struct Member {
     pub mode: ViewMode,
     #[serde(default)]
     pub layout: Layout,
+    /// The seat was emptied while the game was running (leave/remove). The
+    /// member stays so every other player keeps their seat number, but its
+    /// session token is dead, so that person can no longer act.
+    #[serde(default)]
+    pub left: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -171,8 +176,72 @@ impl RoomData {
             last_seen_ms: now_ms(),
             mode: ViewMode::Normal,
             layout: Layout::default(),
+            left: false,
         });
         true
+    }
+}
+
+/// What happened to a seat that was emptied.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SeatOutcome {
+    /// The slot was freed; the room is still waiting to start.
+    Lobby { name: String },
+    /// The game was running, so it ended for everyone in the room.
+    Ended { name: String },
+}
+
+impl RoomData {
+    /// Empty the seat at `idx`.
+    ///
+    /// In the lobby the member is dropped, which frees the slot. Once the game
+    /// is running the member list must stay exactly as it is — member order is
+    /// the player order, so removing an entry would re-index every other
+    /// player's pieces — so instead the game ends for everybody and the seat is
+    /// flagged `left` with a rotated token, killing the old session cookie.
+    fn empty_seat(&mut self, idx: usize, why: impl Into<String>) -> SeatOutcome {
+        let name = self.members[idx].name.clone();
+        if let Some(game) = self.game.as_mut() {
+            game.abandon(why.into());
+            let seat = &mut self.members[idx];
+            seat.left = true;
+            seat.token = new_token();
+            seat.connected = false;
+            SeatOutcome::Ended { name }
+        } else {
+            self.members.remove(idx);
+            SeatOutcome::Lobby { name }
+        }
+    }
+
+    /// The host removes any other seat (`target` is the member index, which is
+    /// the player id once the game starts).
+    pub fn remove_player(&mut self, host_token: &str, target: usize) -> Result<SeatOutcome, String> {
+        if !self.is_host(host_token) {
+            return Err("Only the host can remove players.".into());
+        }
+        let host_idx = self.member_index(host_token).unwrap_or(usize::MAX);
+        if target == host_idx {
+            return Err("You cannot remove yourself.".into());
+        }
+        let Some(member) = self.members.get(target) else {
+            return Err("That player is not in this room.".into());
+        };
+        let name = member.name.clone();
+        Ok(self.empty_seat(target, format!("{name} was removed by the host.")))
+    }
+
+    /// A non-host player leaves the room. The host owns the room and cannot
+    /// leave it this way.
+    pub fn leave(&mut self, token: &str) -> Result<SeatOutcome, String> {
+        if self.is_host(token) {
+            return Err("The host cannot leave their own room.".into());
+        }
+        let Some(idx) = self.member_index(token) else {
+            return Err("You are not a member of this room.".into());
+        };
+        let name = self.members[idx].name.clone();
+        Ok(self.empty_seat(idx, format!("{name} left the game.")))
     }
 }
 
@@ -275,6 +344,7 @@ impl AppState {
                 last_seen_ms: now_ms(),
                 mode: ViewMode::Normal,
             layout: Layout::default(),
+            left: false,
             }],
             game: None,
             started: false,
@@ -308,11 +378,14 @@ impl AppState {
             let mut data = room.data.lock().unwrap();
             // Rejoin: a human with the same name (case-insensitive) already
             // holds a seat — hand them a fresh token for that seat so they
-            // resume after closing the tab.
+            // resume after closing the tab. A seat emptied mid-game (left or
+            // removed) is dead and must not be resumed.
             if let Some(seat) = data
                 .members
                 .iter()
-                .position(|m| !m.is_bot && m.name.to_lowercase() == name.to_lowercase())
+                .position(|m| {
+                    !m.is_bot && !m.left && m.name.to_lowercase() == name.to_lowercase()
+                })
             {
                 let token = new_token();
                 data.members[seat].token = token.clone();
@@ -339,6 +412,7 @@ impl AppState {
                     last_seen_ms: now_ms(),
                     mode: ViewMode::Normal,
             layout: Layout::default(),
+            left: false,
                 });
                 data.last_activity_ms = now_ms();
                 token
@@ -801,6 +875,7 @@ mod tests {
             last_seen_ms: 0,
             mode: ViewMode::Normal,
             layout: Layout::default(),
+            left: false,
         }
     }
 
@@ -885,5 +960,179 @@ mod tests {
         assert!(data.can_pause_now());
         data.allow_pause = false;
         assert!(!data.can_pause_now());
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("catan-omk64-{tag}-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn app(tag: &str) -> (Arc<AppState>, PathBuf) {
+        let dir = scratch(tag);
+        (AppState::new(dir.clone()), dir)
+    }
+
+    /// Alice creates a room and Bob joins it.
+    fn two_players(tag: &str) -> (Arc<AppState>, Arc<Room>, String, String, PathBuf) {
+        let (app, dir) = app(tag);
+        let (room, alice) = app.create_room("Alice".into(), 180, true).unwrap();
+        let code = room_code(&room);
+        let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        (app, room, alice, bob, dir)
+    }
+
+    #[test]
+    fn host_remove_in_lobby_frees_the_slot() {
+        let (app, room, alice, bob, dir) = two_players("remove-lobby");
+        let outcome = room.data.lock().unwrap().remove_player(&alice, 1);
+        assert_eq!(outcome, Ok(SeatOutcome::Lobby { name: "Bob".into() }));
+        let data = room.data.lock().unwrap();
+        assert_eq!(data.members.len(), 1, "the freed slot leaves only the host");
+        assert!(
+            data.member_index(&bob).is_none(),
+            "the removed player is gone"
+        );
+        assert!(data.member_index(&alice).is_some(), "the host stays");
+        assert!(!data.started);
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn non_host_cannot_remove() {
+        let (app, room, alice, bob, dir) = two_players("remove-denied");
+        let err = room.data.lock().unwrap().remove_player(&bob, 0);
+        assert_eq!(err, Err("Only the host can remove players.".into()));
+        let data = room.data.lock().unwrap();
+        assert_eq!(data.members.len(), 2, "nobody was removed");
+        assert!(data.member_index(&alice).is_some());
+        assert!(data.member_index(&bob).is_some());
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn host_cannot_remove_themselves_or_a_missing_seat() {
+        let (_app, room, alice, _bob, dir) = two_players("remove-self");
+        let mut data = room.data.lock().unwrap();
+        assert_eq!(
+            data.remove_player(&alice, 0),
+            Err("You cannot remove yourself.".into())
+        );
+        assert_eq!(
+            data.remove_player(&alice, 9),
+            Err("That player is not in this room.".into())
+        );
+        assert_eq!(data.members.len(), 2);
+        drop(data);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn leave_in_lobby_frees_the_slot() {
+        let (app, room, alice, bob, dir) = two_players("leave-lobby");
+        let outcome = room.data.lock().unwrap().leave(&bob);
+        assert_eq!(outcome, Ok(SeatOutcome::Lobby { name: "Bob".into() }));
+        let data = room.data.lock().unwrap();
+        assert_eq!(data.members.len(), 1);
+        assert!(
+            data.member_index(&bob).is_none(),
+            "the leaver's seat is free"
+        );
+        assert!(data.member_index(&alice).is_some());
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn host_cannot_leave_their_own_room() {
+        let (app, room, alice, _bob, dir) = two_players("host-stays");
+        let err = room.data.lock().unwrap().leave(&alice);
+        assert_eq!(err, Err("The host cannot leave their own room.".into()));
+        assert_eq!(room.data.lock().unwrap().members.len(), 2);
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn leave_midgame_ends_the_game_for_everyone() {
+        let (app, room, alice, bob, dir) = two_players("leave-mid");
+        app.start_game(&room, &alice).unwrap();
+        let bob_seat = room.data.lock().unwrap().member_index(&bob).unwrap();
+
+        let outcome = room.data.lock().unwrap().leave(&bob);
+        assert_eq!(outcome, Ok(SeatOutcome::Ended { name: "Bob".into() }));
+
+        let data = room.data.lock().unwrap();
+        let game = data.game.as_ref().expect("the game object stays");
+        assert!(game.is_over(), "the game is over for everyone");
+        assert_eq!(game.winner, None, "nobody wins when a player walks out");
+        assert!(
+            game.log
+                .iter()
+                .any(|l| l.text.contains("Bob left the game.")),
+            "the shared log records why it ended"
+        );
+        // Seats keep their indices, so the surviving players still map to
+        // their own pieces...
+        assert_eq!(data.members.len(), 2, "seats are not re-indexed");
+        assert!(data.member_index(&alice).is_some());
+        assert_eq!(data.member_index(&alice).unwrap(), 0);
+        // ...but the leaver's old session is dead.
+        assert!(
+            data.member_index(&bob).is_none(),
+            "the old token no longer works"
+        );
+        assert!(
+            data.members[bob_seat].left,
+            "the seat is flagged as emptied"
+        );
+        assert!(!data.members[bob_seat].is_bot);
+        drop(data);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn host_remove_midgame_ends_the_game_for_everyone() {
+        let (app, room, alice, bob, dir) = two_players("remove-mid");
+        app.start_game(&room, &alice).unwrap();
+
+        let outcome = room.data.lock().unwrap().remove_player(&alice, 1);
+        assert_eq!(outcome, Ok(SeatOutcome::Ended { name: "Bob".into() }));
+
+        let data = room.data.lock().unwrap();
+        assert!(data.game.as_ref().unwrap().is_over());
+        assert_eq!(data.game.as_ref().unwrap().winner, None);
+        assert!(
+            data.game
+                .as_ref()
+                .unwrap()
+                .log
+                .iter()
+                .any(|l| l.text.contains("Bob was removed by the host.")),
+            "the shared log records who removed whom"
+        );
+        assert!(data.member_index(&bob).is_none());
+        assert!(data.member_index(&alice).is_some());
+        drop(data);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn player_who_left_cannot_rejoin_the_finished_game() {
+        let (app, room, alice, bob, dir) = two_players("rejoin-dead-seat");
+        let code = room_code(&room);
+        app.start_game(&room, &alice).unwrap();
+        room.data.lock().unwrap().leave(&bob).unwrap();
+
+        // Same name, but the seat is dead: joining must not hand the leaver a
+        // fresh token for the finished game.
+        let err = app.join(&code, "Bob".into()).map(|(_, token)| token);
+        assert_eq!(err, Err(JoinError::AlreadyStarted));
+        let data = room.data.lock().unwrap();
+        assert!(data.member_index(&bob).is_none());
+        drop(data);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
