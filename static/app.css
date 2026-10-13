@@ -45,6 +45,16 @@ body:not(.game) .formrow{display:flex;gap:10px;align-items:flex-end;flex-wrap:wr
 body:not(.game) .formrow .field{flex:1 1 150px;margin-bottom:0}
 body:not(.game) .card .btn{width:100%}
 body:not(.game) .card .formrow .btn{width:auto}
+/* Home menu: three big, self-explanatory buttons so a new player can start
+   without scanning the page. Icon + label + one-line hint per row. */
+.menu{display:flex;flex-direction:column;gap:12px}
+.menu .btn{display:flex;align-items:center;gap:14px;width:100%;min-height:64px;padding:14px 16px;text-align:left;border-radius:14px;font-size:17px}
+.menu .btn .ic{width:26px;height:26px}
+.menu .btn .menu-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.menu .btn .m1{font-weight:900;line-height:1.1}
+.menu .btn .m2{font-size:12px;font-weight:600;opacity:.78;line-height:1.15}
+.page-back{margin:2px 0 20px;text-align:center}
+.page-back a{color:#ffeaa7;font-weight:700;text-decoration:none}
 body:not(.game) .pcard{background:#ffffff1f;border:1px solid #ffffff33}
 body:not(.game) .pcard .pname{color:#fff}
 body:not(.game) code.roomcode{background:#ffffff22;color:#ffeaa7;font-weight:900;letter-spacing:6px;font-size:30px;padding:8px 16px 8px 22px;border-radius:12px}

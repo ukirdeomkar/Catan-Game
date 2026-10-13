@@ -22,8 +22,8 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/", get(home))
         .route("/how-to-play", get(how_to_play))
         .route("/privacy", get(privacy))
-        .route("/create", post(create))
-        .route("/join", post(join))
+        .route("/create", get(create_form).post(create))
+        .route("/join", get(join_form).post(join))
         .route("/room/{code}", get(room_page))
         .route("/room/{code}/join", post(join_room))
         .route("/room/{code}/events", get(events))
@@ -134,7 +134,7 @@ fn set_cookie_header(code: &str, token: &str) -> (header::HeaderName, String) {
 // ---------------------------------------------------------------------------
 
 async fn home() -> Html<String> {
-    Html(render::home_page(None).into_string())
+    Html(render::home_page().into_string())
 }
 
 async fn how_to_play() -> Html<String> {
@@ -145,6 +145,14 @@ async fn how_to_play() -> Html<String> {
 /// and must stay reachable without login; see issue #14 / OMK-55.
 async fn privacy() -> Html<String> {
     Html(render::privacy_page().into_string())
+}
+
+async fn create_form() -> Html<String> {
+    Html(render::create_page(None).into_string())
+}
+
+async fn join_form() -> Html<String> {
+    Html(render::join_room_page(None).into_string())
 }
 
 #[derive(serde::Deserialize)]
@@ -174,7 +182,7 @@ async fn create(State(app): State<Arc<AppState>>, Form(form): Form<NameForm>) ->
             let (h, v) = set_cookie_header(&code, &token);
             ([(h, v)], Redirect::to(&format!("/room/{code}"))).into_response()
         }
-        Err(e) => Html(render::home_page(Some(join_error(&e))).into_string()).into_response(),
+        Err(e) => Html(render::create_page(Some(join_error(&e))).into_string()).into_response(),
     }
 }
 
@@ -186,7 +194,7 @@ async fn join(State(app): State<Arc<AppState>>, Form(form): Form<JoinForm>) -> R
             let (h, v) = set_cookie_header(&code, &token);
             ([(h, v)], Redirect::to(&format!("/room/{code}"))).into_response()
         }
-        Err(e) => Html(render::home_page(Some(join_error(&e))).into_string()).into_response(),
+        Err(e) => Html(render::join_room_page(Some(join_error(&e))).into_string()).into_response(),
     }
 }
 
