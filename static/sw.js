@@ -5,7 +5,7 @@
 // to give a small offline fallback. The game itself is live over SSE, so we
 // never cache game traffic — only the static app shell.
 
-const CACHE = "catanou-v10";
+const CACHE = "catanou-v11";
 
 // App-shell assets, pre-cached on install. Failures are ignored per-file so a
 // single missing asset can never wedge the worker install.
@@ -87,15 +87,18 @@ async function handle(req, url) {
   const cache = await caches.open(CACHE);
 
   if (url.pathname.startsWith("/static/")) {
-    // Stale-while-revalidate: instant from cache, refreshed in the background.
-    const cached = await cache.match(req);
-    const network = fetch(req)
-      .then((res) => {
-        if (res && res.status === 200) cache.put(req, res.clone());
-        return res;
-      })
-      .catch(() => cached);
-    return cached || network;
+    // Network-first: a fresh deploy is picked up on the next load instead of
+    // being shadowed by a stale cached stylesheet/script. The cache is only an
+    // offline fallback. Assets are requested with a `?v=<hash>` cache-buster, so
+    // a changed asset is a new URL and can never resolve to a stale entry.
+    try {
+      const res = await fetch(req);
+      if (res && res.status === 200) cache.put(req, res.clone());
+      return res;
+    } catch (_) {
+      const cached = await cache.match(req);
+      return cached || new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+    }
   }
 
   // Pages and everything else: network first, cache as an offline fallback.
