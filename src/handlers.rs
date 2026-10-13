@@ -21,6 +21,7 @@ pub fn router(app: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(home))
         .route("/how-to-play", get(how_to_play))
+        .route("/privacy", get(privacy))
         .route("/create", get(create_form).post(create))
         .route("/join", get(join_form).post(join))
         .route("/room/{code}", get(room_page))
@@ -146,6 +147,12 @@ async fn home() -> Html<String> {
 
 async fn how_to_play() -> Html<String> {
     Html(render::how_to_play_page().into_string())
+}
+
+/// Public privacy policy for the Play Store listing. Required by Google Play
+/// and must stay reachable without login; see issue #14 / OMK-55.
+async fn privacy() -> Html<String> {
+    Html(render::privacy_page().into_string())
 }
 
 async fn create_form() -> Html<String> {
