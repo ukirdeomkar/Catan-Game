@@ -44,7 +44,13 @@ pub fn router(app: Arc<AppState>) -> Router {
 /// covers every page (enables PWA installability).
 async fn service_worker() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            // Revalidate the worker on every navigation so a new deploy's worker
+            // (and its cache version) is picked up immediately instead of being
+            // pinned for the browser's default ~24h worker cache.
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
         include_str!("../static/sw.js"),
     )
 }

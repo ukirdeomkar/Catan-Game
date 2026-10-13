@@ -3,6 +3,7 @@ FROM rust:1.99-alpine AS build
 RUN apk add --no-cache build-base
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
 COPY src ./src
 COPY static ./static
 RUN cargo build --release

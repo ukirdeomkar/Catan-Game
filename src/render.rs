@@ -212,6 +212,17 @@ fn board_robber(cx: f64, cy: f64, board: bool) -> Markup {
 // Shells
 // ---------------------------------------------------------------------------
 
+/// Content-hash version for the app-shell assets, computed by `build.rs` from
+/// the contents of `static/app.css` and every top-level `static/*.js`. Appended
+/// as `?v=<hash>` so a changed asset is a new URL and cannot be served from a
+/// stale browser or service-worker cache after a deploy.
+const ASSET_VERSION: &str = env!("ASSET_VERSION");
+
+/// Cache-busting URL for a `/static` app-shell asset.
+fn asset(path: &str) -> String {
+    format!("{path}?v={ASSET_VERSION}")
+}
+
 fn head_common(title: &str) -> Markup {
     html! {
         head {
@@ -235,19 +246,19 @@ fn head_common(title: &str) -> Markup {
             link rel="apple-touch-icon" href="/static/branding/apple-touch-icon.png";
             link rel="manifest" href="/static/branding/site.webmanifest";
             link rel="preload" as="font" type="font/woff2" href="/static/fonts/nunito-latin.woff2" crossorigin;
-            link rel="stylesheet" href="/static/app.css";
+            link rel="stylesheet" href=(asset("/static/app.css"));
             meta name="apple-mobile-web-app-capable" content="yes";
             meta name="mobile-web-app-capable" content="yes";
             meta name="apple-mobile-web-app-title" content="Play Catanou";
             meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
-            script src="/static/htmx.min.js" defer {}
-            script src="/static/sse.js" defer {}
-            script src="/static/timer.js" defer {}
-            script src="/static/trade.js" defer {}
-            script src="/static/ui.js" defer {}
-            script src="/static/discard.js" defer {}
-            script src="/static/audio.js" defer {}
-            script src="/static/pwa.js" defer {}
+            script src=(asset("/static/htmx.min.js")) defer {}
+            script src=(asset("/static/sse.js")) defer {}
+            script src=(asset("/static/timer.js")) defer {}
+            script src=(asset("/static/trade.js")) defer {}
+            script src=(asset("/static/ui.js")) defer {}
+            script src=(asset("/static/discard.js")) defer {}
+            script src=(asset("/static/audio.js")) defer {}
+            script src=(asset("/static/pwa.js")) defer {}
         }
     }
 }
@@ -517,7 +528,7 @@ pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
             div hx-ext="sse" sse-connect=(format!("/room/{code}/events")) {
                 div #lobbybox sse-swap="lobby" { (lobby_frag(code, data, token)) }
             }
-            script src="/static/lobby.js" defer {}
+            script src=(asset("/static/lobby.js")) defer {}
         }
     })
 }
