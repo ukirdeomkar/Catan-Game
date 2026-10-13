@@ -419,15 +419,41 @@ fn beat_head(n: u8, title: &str) -> Markup {
     }
 }
 
+/// Return-path controls for the guide: always a way Home, plus a way back to
+/// the live room when the reader arrived from a game in progress.
+fn howto_back_links(back: Option<&str>) -> Markup {
+    html! {
+        @if let Some(code) = back {
+            a.btn href=(format!("/room/{code}")) { (ic("play")) "Back to game" }
+        }
+        a.btn.sec href="/" { (ic("home")) "Back to home" }
+    }
+}
+
 /// Static, scrollable "How to play" reference — one card per design beat 0–6.
 /// Reachable from the home screen and the in-game menu; needs no live game.
 /// Build costs come from the engine cost constants, never hard-coded copy.
-pub fn how_to_play_page() -> Markup {
+///
+/// `back` is the live room the reader came from, set when the guide is opened
+/// during a game: it puts a "Back to game" control at the top of the page so
+/// the game is never abandoned, and repeats it under the last card. Without it
+/// (opened from Home) the page keeps its single Home path.
+pub fn how_to_play_page(back: Option<&str>) -> Markup {
     shell("How to play", html! {
         div.wrap.page.howto {
             div.hero {
                 h1 { "How to play" }
                 p.muted { "A quick reference for Catan — from the first roll to 10 victory points." }
+            }
+
+            @if let Some(code) = back {
+                div.card.howto-cta {
+                    p {
+                        "Your game in room " b { (code) } " is still running — "
+                        "the board keeps playing while you read."
+                    }
+                    (howto_back_links(Some(code)))
+                }
             }
 
             div.card.beat {
@@ -516,7 +542,7 @@ pub fn how_to_play_page() -> Markup {
                 }
             }
 
-            p.howto-back { a.btn.sec href="/" { "Back to home" } }
+            p.howto-back { (howto_back_links(back)) }
         }
     })
 }
@@ -1375,7 +1401,7 @@ fn menu_sheet(code: &str, data: &RoomData, game: &GameState, _viewer: Option<Pla
             h3 { "Build guide" }
             (build_guide())
             h3 style="margin-top:14px" { "How to play" }
-            a.btn.sec href="/how-to-play" { (ic("info")) "Open the how-to-play guide" }
+            a.btn.sec href=(format!("/how-to-play?room={code}")) { (ic("info")) "Open the how-to-play guide" }
             h3 style="margin-top:14px" { "Log" }
             div #log.logbox sse-swap="log" { (log_frag(game)) }
             p.muted.small style="margin-top:12px" {

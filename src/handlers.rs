@@ -4,7 +4,7 @@ use crate::game::state::BotLevel;
 use crate::render;
 use crate::state::{AppState, JoinError, Layout, Room, ViewMode, now_ms};
 use axum::{
-    extract::{Form, Path, State},
+    extract::{Form, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response, Sse, sse::{Event, KeepAlive}},
     routing::{get, post},
@@ -145,8 +145,25 @@ async fn home() -> Html<String> {
     Html(render::home_page().into_string())
 }
 
-async fn how_to_play() -> Html<String> {
-    Html(render::how_to_play_page().into_string())
+async fn how_to_play(State(app): State<Arc<AppState>>, Query(q): Query<HowToPlayQuery>) -> Html<String> {
+    let back = live_room(&app, &q.room);
+    Html(render::how_to_play_page(back.as_deref()).into_string())
+}
+
+/// The room a reader came from, so the guide can offer a way back to a game in
+/// progress. Normalised against the live room table: an empty, stale, or
+/// hand-typed code yields `None`, and the guide shows the Home path only
+/// rather than a link to a room that no longer exists.
+fn live_room(app: &AppState, raw: &str) -> Option<String> {
+    let code = raw.trim().to_uppercase();
+    (!code.is_empty() && app.room(&code).is_some()).then_some(code)
+}
+
+/// Query for `/how-to-play`: the optional `?room=` of the game being left.
+#[derive(serde::Deserialize)]
+struct HowToPlayQuery {
+    #[serde(default)]
+    room: String,
 }
 
 /// Public privacy policy for the Play Store listing. Required by Google Play
@@ -739,3 +756,69 @@ fn toast(msg: &str) -> Response {
 // Keep the Room import used by the router signature helpers.
 #[allow(dead_code)]
 fn _assert_room(_: &Arc<Room>) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app(tag: &str) -> Arc<AppState> {
+        // A per-test directory, removed afterwards, so persisted room files
+        // never leak between tests or into the repo.
+        let dir = std::env::temp_dir().join(format!("catan-how-to-play-test-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        AppState::new(dir)
+    }
+
+    async fn guide(app: &Arc<AppState>, room: &str) -> String {
+        let res = how_to_play(State(app.clone()), Query(HowToPlayQuery { room: room.into() })).await;
+        res.0
+    }
+
+    #[tokio::test]
+    async fn guide_from_a_live_room_links_back_to_that_game() {
+        let app = test_app("live");
+        let (room, _token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+
+        let body = guide(&app, &code).await;
+        assert!(body.contains("Back to game"), "a mid-game guide must offer a way back");
+        assert!(
+            body.contains(&format!("href=\"/room/{code}\"")),
+            "the return link must target the live room"
+        );
+        assert!(body.contains("Back to home"), "Home stays available too");
+    }
+
+    #[tokio::test]
+    async fn guide_from_home_keeps_the_home_path_only() {
+        let app = test_app("home");
+        let body = guide(&app, "").await;
+        assert!(!body.contains("Back to game"), "no room means there is no game to return to");
+        assert!(body.contains("Back to home"), "Home remains the only return path");
+    }
+
+    #[tokio::test]
+    async fn guide_drops_unknown_or_malformed_room_codes() {
+        let app = test_app("stale");
+        for raw in ["ZZZZ", "", "   ", "\tabc\n"] {
+            let body = guide(&app, raw).await;
+            assert!(!body.contains("Back to game"), "{raw:?} must not produce a return path");
+            assert!(body.contains("Back to home"), "{raw:?} still needs the Home path");
+        }
+    }
+
+    #[tokio::test]
+    async fn guide_looks_a_live_room_up_case_insensitively() {
+        let app = test_app("case");
+        let (room, _token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+
+        let body = guide(&app, &code.to_lowercase()).await;
+        assert!(
+            body.contains(&format!("href=\"/room/{code}\"")),
+            "the lookup must normalise case before matching a live room"
+        );
+    }
+}
