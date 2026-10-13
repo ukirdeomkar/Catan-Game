@@ -380,3 +380,17 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-conten
 .howto .guide-icon{color:#eaf3fb}
 .howto .guide-name{color:#f2f7fb}
 .howto .guide-row{border-bottom-color:#ffffff1f}
+
+/* Privacy policy (public, Play Store requirement) */
+.policy .hero{margin-bottom:12px}
+.policy .policy-updated{margin:2px 0 0;font-size:12px;font-weight:700;letter-spacing:.3px;color:#bcd3e3}
+.policy .card h3{display:block;margin:0 0 8px}
+.policy .card p{margin:0 0 8px;font-size:14px;line-height:1.55}
+.policy .card p:last-child{margin-bottom:0}
+.policy .policy-list{margin:0 0 8px;padding-left:18px;font-size:14px;line-height:1.55}
+.policy .policy-list:last-child{margin-bottom:0}
+.policy .policy-list li{margin-bottom:6px}
+.policy .policy-list li:last-child{margin-bottom:0}
+.policy a{color:#ffeaa7;font-weight:700;text-decoration:none}
+.policy a:hover{text-decoration:underline}
+.policy code{font-size:12px}
