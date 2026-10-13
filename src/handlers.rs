@@ -30,6 +30,8 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/layout", post(set_layout))
         .route("/room/{code}/start", post(start))
         .route("/room/{code}/add_bot", post(add_bot))
+        .route("/room/{code}/remove", post(remove_player))
+        .route("/room/{code}/leave", post(leave_player))
         .route("/healthz", get(|| async { "ok" }))
         // Served from the root so the worker's scope covers the whole origin.
         .route("/sw.js", get(service_worker))
@@ -69,6 +71,14 @@ fn set_cookie_header(code: &str, token: &str) -> (header::HeaderName, String) {
             "{}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000",
             cookie_name(code)
         ),
+    )
+}
+
+/// Drop the room's cookie so a tab that is still open stops presenting it.
+fn clear_cookie_header(code: &str) -> (header::HeaderName, String) {
+    (
+        header::SET_COOKIE,
+        format!("{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", cookie_name(code)),
     )
 }
 
@@ -233,7 +243,10 @@ fn render_events(app: &AppState, code: &str, token: &str) -> Vec<Result<Event, I
     };
     let mut data = room.data.lock().unwrap();
     let Some(v) = data.member_index(token) else {
-        return Vec::new();
+        // Our session stopped working — we left, or the host removed us. Tell
+        // this browser to go home; the next real page load lands there anyway
+        // because the token no longer maps to a seat.
+        return vec![Ok(Event::default().event("gone").data("/"))];
     };
     data.members[v].last_seen_ms = now_ms();
     let mk = |name: &str, m: maud::Markup| {
@@ -592,6 +605,93 @@ async fn add_bot(
     room.bump();
     app.persist(&room);
     Redirect::to(&format!("/room/{code}")).into_response()
+}
+
+/// Host-only: drop another seat. In the lobby the slot is freed; once the game
+/// is running it ends for everyone in the room.
+async fn remove_player(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return toast("Room not found.");
+    };
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return toast("Your session expired. Reload the page.");
+    };
+    let Some(target) = form.get("player").and_then(|p| p.parse::<usize>().ok()) else {
+        return toast("Which player? Reload the page.");
+    };
+    let outcome = {
+        let mut data = room.data.lock().unwrap();
+        data.remove_player(&token, target)
+    };
+    // An empty 200 clears the toast area; the bumped room pushes the new lobby
+    // fragment / game-over state over SSE, so no reload is needed.
+    match outcome {
+        Ok(_) => {
+            room.bump();
+            app.persist(&room);
+            cleared()
+        }
+        Err(msg) => toast(&msg),
+    }
+}
+
+/// A non-host player leaves the room. Their slot is freed in the lobby, and
+/// mid-game the game ends for everyone.
+async fn leave_player(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return toast("Room not found.");
+    };
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return toast("Your session expired. Reload the page.");
+    };
+    let outcome = {
+        let mut data = room.data.lock().unwrap();
+        data.leave(&token)
+    };
+    match outcome {
+        Ok(_) => {
+            room.bump();
+            app.persist(&room);
+            // Send them out of the room, and expire the room's cookie so a
+            // stray reload lands on the home page instead of a dead seat. The
+            // `gone` SSE event is the second half of that navigation for a tab
+            // that is still open.
+            let (h, v) = clear_cookie_header(&code);
+            (
+                StatusCode::OK,
+                [
+                    (h, v),
+                    (header::HeaderName::from_static("hx-retarget"), "#toasts".to_string()),
+                    (header::HeaderName::from_static("hx-redirect"), "/".to_string()),
+                ],
+                Html(String::new()),
+            )
+                .into_response()
+        }
+        Err(msg) => toast(&msg),
+    }
+}
+
+/// Empty 200 with the swap pointed at `#toasts`, so htmx clears any stale
+/// error instead of leaving it on screen.
+fn cleared() -> Response {
+    (
+        StatusCode::OK,
+        [(header::HeaderName::from_static("hx-retarget"), "#toasts".to_string())],
+        Html(String::new()),
+    )
+        .into_response()
 }
 
 fn toast(msg: &str) -> Response {
