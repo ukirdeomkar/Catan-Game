@@ -359,8 +359,11 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
 /* Tutorial / how-to-play */
 a.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .howto-cta p{margin:0 0 10px}
+/* Separate the stacked return controls in the resume card. */
+.howto-cta .btn+.btn{margin-top:8px}
 .howto .hero{margin-bottom:12px}
-.howto-back{margin:4px 0 20px;text-align:center}
+/* Two return controls side by side; gap keeps them from touching. */
+.howto-back{margin:4px 0 20px;text-align:center;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .beat-head{display:flex;align-items:center;gap:10px;margin:0 0 8px}
 .beat-head h3{margin:0}
 .beat-num{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:#2e7dd1;color:#fff;font-weight:900;font-size:13px;display:flex;align-items:center;justify-content:center}
