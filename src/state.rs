@@ -315,6 +315,13 @@ impl AppState {
                 .position(|m| !m.is_bot && m.name.to_lowercase() == name.to_lowercase())
             {
                 let token = new_token();
+                // Rejoining hands back a fresh token for the same seat. If that
+                // seat was the host, rotate `host_token` in lockstep — `is_host`
+                // compares the two, so otherwise the rejoined host is locked out
+                // of host-only actions such as starting the game.
+                if data.host_token == data.members[seat].token {
+                    data.host_token = token.clone();
+                }
                 data.members[seat].token = token.clone();
                 data.members[seat].connected = true;
                 data.members[seat].last_seen_ms = now_ms();
@@ -825,6 +832,38 @@ mod tests {
             bot_next_ms: 0,
             bot_key: u64::MAX,
         }
+    }
+
+    fn test_app(tag: &str) -> Arc<AppState> {
+        let dir = std::env::temp_dir().join(format!("catan-state-test-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        AppState::new(dir)
+    }
+
+    #[test]
+    fn same_name_rejoin_keeps_host_privileges() {
+        let app = test_app("rejoin-host");
+        let (room, host_token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        // A second human so the lobby can actually start.
+        app.join(&code, "Bo".into()).unwrap();
+
+        // Rejoin the host by name; the seat token is rotated.
+        let (_, fresh) = app.join(&code, "Al".into()).unwrap();
+        assert_ne!(fresh, host_token, "rejoin must rotate the seat token");
+
+        {
+            let data = room.data.lock().unwrap();
+            assert!(data.is_host(&fresh), "the rejoined host must remain host");
+            assert!(!data.is_host(&host_token), "the stale token must lose host");
+            assert!(data.can_start(), "the lobby is still startable");
+        }
+        assert!(
+            app.start_game(&room, &fresh).is_ok(),
+            "the rejoined host must be able to start the game"
+        );
+
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
     #[test]
