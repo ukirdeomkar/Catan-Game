@@ -3,7 +3,8 @@ use crate::game::resources::{
     ALL_RESOURCES, COST_CITY, COST_DEV, COST_ROAD, COST_SETTLEMENT, Bundle, DevCard, Resource,
 };
 use crate::game::scoring::longest_road_length;
-use crate::game::state::{GameState, Phase, PlayerId, TradeOffer, TradeResponse};
+use crate::game::state::{GameState, Move, Phase, PlayerId, TradeOffer, TradeResponse};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct RuleError(pub String);
@@ -24,7 +25,7 @@ impl std::error::Error for RuleError {}
 
 pub type RuleResult = Result<(), RuleError>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Action {
     // --- Setup phase ---
     PlaceSettlement { vertex: usize },
@@ -65,6 +66,23 @@ impl GameState {
         if self.is_over() {
             return Err(RuleError::new("The game is over"));
         }
+        let result = self.apply_inner(actor, action);
+        // Record only moves that actually changed the game, so the move log is
+        // exactly the sequence a replay needs to reproduce every state.
+        if result.is_ok() {
+            self.moves.push(Move {
+                actor,
+                action: action.clone(),
+                forced: false,
+            });
+        }
+        result
+    }
+
+    /// The rule dispatch itself, without recording. `apply` wraps this to keep
+    /// the move log; replay also calls it directly so reconstructing a state
+    /// never re-records the moves it is replaying.
+    fn apply_inner(&mut self, actor: PlayerId, action: &Action) -> RuleResult {
         match action {
             Action::PlaceSettlement { vertex } => self.setup_place_settlement(actor, *vertex),
             Action::PlaceRoad { edge } => self.setup_place_road(actor, *edge),
@@ -837,6 +855,68 @@ impl GameState {
         let actor = self.current;
         self.finish_turn(actor);
         self.push_log(None, "Turn ended by timer.");
+        // Record the forced end so the replay reproduces the skipped roll.
+        self.moves.push(Move {
+            actor,
+            action: Action::EndTurn,
+            forced: true,
+        });
+    }
+
+    /// Expire the open trade offer if `id` is still the active one. Used by the
+    /// 30s trade timer. Returns whether anything changed, so the caller knows
+    /// whether to bump/persist. Recorded as a forced move so a replay rebuilds
+    /// the same transient offer state.
+    pub fn expire_trade(&mut self, id: u64) -> bool {
+        if self.trade.as_ref().map(|t| t.id) != Some(id) {
+            return false;
+        }
+        let actor = self.trade.as_ref().map(|t| t.from).unwrap_or(0);
+        self.trade = None;
+        self.push_log(None, "The trade offer expired.");
+        self.moves.push(Move {
+            actor,
+            action: Action::CancelTrade,
+            forced: true,
+        });
+        true
+    }
+
+    /// Rebuild the state after the first `upto` recorded moves, starting from a
+    /// post-`start()` base snapshot. The engine is pure and the RNG is
+    /// serialisable, so replaying the same moves reproduces the exact state.
+    pub fn replay_to(base: &GameState, moves: &[Move], upto: usize) -> GameState {
+        let mut game = base.clone();
+        game.moves = Vec::new();
+        for m in moves.iter().take(upto) {
+            let _ = game.apply_recorded(m);
+            game.moves.push(m.clone());
+        }
+        game
+    }
+
+    /// Apply one recorded move without recording it again. Forced moves (timer
+    /// end-turn, trade expiry) bypass validation because they are not legal
+    /// player actions but must still replay.
+    fn apply_recorded(&mut self, m: &Move) -> RuleResult {
+        if !m.forced {
+            return self.apply_inner(m.actor, &m.action);
+        }
+        match &m.action {
+            Action::EndTurn => {
+                if matches!(self.phase, Phase::Play) {
+                    self.finish_turn(m.actor);
+                    self.push_log(None, "Turn ended by timer.");
+                }
+                Ok(())
+            }
+            Action::CancelTrade => {
+                self.trade = None;
+                self.push_log(None, "The trade offer expired.");
+                Ok(())
+            }
+            other => self.apply_inner(m.actor, other),
+        }
     }
 
     fn finish_turn(&mut self, actor: PlayerId) {

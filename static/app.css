@@ -407,3 +407,31 @@ body:not(.game) .check input{width:18px;height:18px;accent-color:#2e7dd1}
 .policy a{color:#ffeaa7;font-weight:700;text-decoration:none}
 .policy a:hover{text-decoration:underline}
 .policy code{font-size:12px}
+
+/* --- End-of-game replay (issue #13) --- */
+.replay h1{font-size:22px;margin:0}
+.replay-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.replay-bar .btn{width:auto}
+.replay-pos{margin-left:auto;font-weight:800;font-size:13px}
+.replay-main{display:flex;flex-direction:column;gap:12px}
+.replay-board{background:rgba(7,40,63,.55);border:1px solid #ffffff2e;border-radius:16px;padding:8px;box-shadow:0 8px 26px #00000038}
+.replay-board svg{display:block;width:100%;height:auto;max-height:58vh}
+.replay-now{font-weight:800;font-size:15px;margin:0 0 10px}
+.replay-nav{display:flex;gap:10px;margin-bottom:12px}
+.replay-nav .btn{flex:1}
+.replay-nav .btn.disabled{opacity:.4;cursor:not-allowed;background:#37424e;color:#fff;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;padding:10px 14px;font-weight:700;font-size:14px;min-height:40px}
+.rp-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+.rp-card{background:#ffffff14;border:1px solid #ffffff2e;border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.rp-card.light{color:#22303c;background:#eef1f4;border-color:#ffffff66}
+.rp-name{display:flex;align-items:center;gap:6px;font-weight:900;font-size:13px}
+.rp-stats{display:flex;flex-wrap:wrap;gap:4px 8px;font-size:12px;font-weight:700}
+.rp-stat{display:inline-flex;align-items:center;gap:3px}
+.rp-stat .ic{width:14px;height:14px}
+.rp-stat .glyph{width:14px;height:14px}
+.replay-list{list-style:none;margin:0;padding:0;max-height:44vh;overflow:auto;border-top:1px solid #ffffff1f}
+.replay-item{border-bottom:1px solid #ffffff14}
+.replay-item a{display:flex;gap:6px;padding:7px 4px;text-decoration:none;color:#dbebf7;font-size:13px}
+.replay-item a:hover{background:#ffffff14}
+.replay-item.on a{color:#ffeaa7;font-weight:900}
+.replay-num{color:#9fc0d8;font-weight:900;min-width:26px;text-align:right}
+.pill.win .replay-open{margin-left:10px;padding:4px 10px;min-height:28px;font-size:12px}
