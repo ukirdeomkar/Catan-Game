@@ -952,4 +952,53 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
+
+    /// Test helper for manual/browser QA of the replay: writes a finished game
+    /// to `CATAN_SEED_DIR` (default a temp dir) and prints its room code. Point
+    /// the server at that dir, then join the printed code with the name `Al` to
+    /// land in the finished room and open its Replay. Ignored by default.
+    #[test]
+    #[ignore = "test helper: seeds a finished replay room for browser QA"]
+    fn seed_finished_room_for_qa() {
+        let dir = std::env::var("CATAN_SEED_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("catan-replay-qa"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let app = AppState::new(dir.clone());
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        app.start_game(&room, &token).unwrap();
+        {
+            let mut data = room.data.lock().unwrap();
+            let g = data.game.as_mut().unwrap();
+            let mut guard = 0;
+            while matches!(g.phase, crate::game::state::Phase::Setup) {
+                guard += 1;
+                assert!(guard < 50, "setup failed to finish");
+                let pid = g.current;
+                if let Some(v) = g.setup_road_from {
+                    let e = g.board.vertices[v]
+                        .edges
+                        .iter()
+                        .copied()
+                        .find(|&e| g.board.edges[e].owner.is_none())
+                        .unwrap();
+                    g.apply(pid, &Action::PlaceRoad { edge: e }).unwrap();
+                } else {
+                    let v = (0..g.board.vertices.len())
+                        .find(|&v| g.legal_settlement_vertices(pid).contains(&v))
+                        .unwrap();
+                    g.apply(pid, &Action::PlaceSettlement { vertex: v }).unwrap();
+                }
+            }
+            g.phase = crate::game::state::Phase::GameOver;
+            g.winner = Some(0);
+        }
+        app.persist(&room);
+        println!(
+            "SEEDED room {} in {}",
+            room.data.lock().unwrap().code,
+            dir.display()
+        );
+    }
 }
