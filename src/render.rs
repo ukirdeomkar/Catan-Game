@@ -705,6 +705,7 @@ pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
 
 pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
     let is_host = data.is_host(token);
+    let add_bot_url = format!("/room/{code}/add_bot");
     html! {
         div.card {
             h3 { (ic("users")) "Players (" (data.members.len()) "/4)" }
@@ -726,7 +727,7 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
         @if is_host {
             div.card {
                 h3 { (ic("settings")) "Host controls" }
-                form method="post" action=(format!("/room/{code}/add_bot")) {
+                form method="post" action=(add_bot_url) hx-post=(add_bot_url) {
                     div.formrow {
                         label.field {
                             span { "Bot difficulty" }
