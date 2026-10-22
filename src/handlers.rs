@@ -874,11 +874,28 @@ async fn leave_player(
         .into_response()
 }
 
-/// Empty `#toasts` swap, so htmx clears any stale error instead of leaving it
-/// on screen.
+/// Clear any stale error toast after a successful action.
+///
+/// This must not depend on the triggering element. The SSE swap can replace
+/// the board or lobby fragment (and therefore the clicked button/spot) before
+/// the POST response lands, so an out-of-band `#toasts` swap would be resolved
+/// against a detached root and silently dropped. htmx dispatches
+/// `HX-Trigger-After-Swap` on `document.body` when the trigger is no longer
+/// attached, and `ui.js` empties `#toasts` on that event.
 fn cleared() -> Response {
-    let body = maud::html! { div #toasts.toasts hx-swap-oob="true" {} }.into_string();
-    oob_only(body)
+    (
+        StatusCode::OK,
+        [
+            (header::HeaderName::from_static("hx-reswap"), "none"),
+            (
+                header::HeaderName::from_static("hx-trigger-after-swap"),
+                "catan:clear-toasts",
+            ),
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        ],
+        String::new(),
+    )
+        .into_response()
 }
 
 fn toast(msg: &str) -> Response {
@@ -938,16 +955,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cleared_swaps_an_empty_toast_container() {
+    async fn cleared_drives_the_toast_clear_from_an_event_not_a_target() {
         let res = cleared();
         assert!(res.headers().get("hx-retarget").is_none());
         assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
-        let body = body_string(res).await;
-        assert!(body.contains(r#"id="toasts""#), "the clear must target #toasts: {body}");
-        assert!(body.contains(r#"hx-swap-oob="true""#), "the clear must be out of band: {body}");
+        assert_eq!(
+            res.headers().get("hx-trigger-after-swap").unwrap(),
+            "catan:clear-toasts",
+            "htmx dispatches this event on <body> when the trigger was detached"
+        );
         assert!(
-            !body.contains("Boom"),
-            "clearing must leave the container empty: {body}"
+            body_string(res).await.is_empty(),
+            "the clear must not rely on resolving a possibly detached target"
         );
     }
 
