@@ -1,11 +1,12 @@
 use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
-use crate::game::state::{BotLevel, GameState};
+use crate::game::state::{BotLevel, GameState, MAX_PLAYERS};
 use crate::render;
 use crate::state::{AppState, JoinError, Layout, Room, SeatOutcome, ViewMode, now_ms};
 use axum::{
-    extract::{Form, Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    extract::{Form, Path, Query, Request, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware::Next,
     response::{Html, IntoResponse, Redirect, Response, Sse, sse::{Event, KeepAlive}},
     routing::{get, post},
     Router,
@@ -38,12 +39,67 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/remove", post(remove_player))
         .route("/room/{code}/leave", post(leave_player))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/robots.txt", get(robots))
         // Served from the root so the worker's scope covers the whole origin.
         .route("/sw.js", get(service_worker))
         // Digital Asset Links for the Android TWA (see docs/PLAYSTORE-ANDROID.md).
         .route("/.well-known/assetlinks.json", get(assetlinks))
         .nest_service("/static", tower_http::services::ServeDir::new("static"))
+        .layer(axum::middleware::from_fn(security_headers))
         .with_state(app)
+}
+
+/// Content-Security-Policy for the whole origin.
+///
+/// Every script and style is served from this origin under `/static`, so the
+/// policy stays tight: no third-party origins, no inline scripts. Inline
+/// `style` attributes are used heavily by the board renderer, hence
+/// `style-src 'unsafe-inline'`. `frame-ancestors 'none'` matches
+/// `X-Frame-Options: DENY`, and lives in CSP because `X-Frame-Options` cannot
+/// express an allowlist.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; \
+     connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; \
+     form-action 'self'; frame-ancestors 'none'";
+
+/// Add baseline security headers to every response, including static assets.
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+    );
+    headers.insert(
+        header::HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
+    );
+    res
+}
+
+/// Crawler policy. Live rooms are private to the players who hold the code, so
+/// they are excluded; the public pages stay crawlable.
+async fn robots() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        "User-agent: *\nAllow: /\nDisallow: /room/\n",
+    )
 }
 
 /// The service worker, embedded and served from the origin root so its scope
@@ -648,7 +704,14 @@ async fn set_layout(
     };
     let layout = match form.get("layout").map(String::as_str) {
         Some("classic") => Layout::Classic,
-        _ => Layout::Board,
+        Some("board") => Layout::Board,
+        _ => {
+            return form_error(
+                &headers,
+                StatusCode::BAD_REQUEST,
+                "Unknown board layout. Pick classic or board.",
+            );
+        }
     };
     {
         let mut data = room.data.lock().unwrap();
@@ -772,25 +835,68 @@ async fn add_bot(
 ) -> Response {
     let code = code.to_uppercase();
     let Some(room) = app.room(&code) else {
-        return Html(render::error_page("Room not found.").into_string()).into_response();
+        return form_error(&headers, StatusCode::NOT_FOUND, "Room not found.");
     };
-    let token = cookie_value(&headers, &cookie_name(&code)).unwrap_or_default();
-    let level = form
-        .get("level")
-        .and_then(|s| BotLevel::from_slug(s))
-        .unwrap_or_default();
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return form_error(
+            &headers,
+            StatusCode::UNAUTHORIZED,
+            "Your session expired. Reload the page.",
+        );
+    };
+    let Some(level) = form.get("level").and_then(|s| BotLevel::from_slug(s)) else {
+        return form_error(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "Unknown bot difficulty. Pick Easy, Medium, or Hard.",
+        );
+    };
     {
         let mut data = room.data.lock().unwrap();
         if !data.is_host(&token) {
-            return Html(render::error_page("Only the host can add bots.").into_string())
-                .into_response();
+            return form_error(
+                &headers,
+                StatusCode::FORBIDDEN,
+                "Only the host can add bots.",
+            );
+        }
+        if data.started {
+            return form_error(
+                &headers,
+                StatusCode::CONFLICT,
+                "The game has already started, so no more bots can join.",
+            );
+        }
+        if data.members.len() >= MAX_PLAYERS {
+            return form_error(
+                &headers,
+                StatusCode::CONFLICT,
+                "The room is full (4 players max).",
+            );
         }
         data.add_bot(level);
         data.last_activity_ms = now_ms();
     }
     room.bump();
     app.persist(&room);
-    Redirect::to(&format!("/room/{code}")).into_response()
+    if is_htmx(&headers) {
+        toast("Bot added.")
+    } else {
+        Redirect::to(&format!("/room/{code}")).into_response()
+    }
+}
+
+/// Whether the request came from HTMX. HTMX forms get an inline toast; plain
+/// form submissions (no JS) get a full error page so the message is readable.
+fn is_htmx(headers: &HeaderMap) -> bool {
+    headers.contains_key("hx-request")
+}
+
+fn form_error(headers: &HeaderMap, status: StatusCode, msg: &str) -> Response {
+    if is_htmx(headers) {
+        return toast(msg);
+    }
+    (status, Html(render::error_page(msg).into_string())).into_response()
 }
 
 /// Host-only: drop another seat. In the lobby the slot is freed; once the game
@@ -1021,6 +1127,193 @@ mod tests {
             assert!(!body.contains("Back to game"), "{raw:?} must not produce a return path");
             assert!(body.contains("Back to home"), "{raw:?} still needs the Home path");
         }
+    }
+
+    fn cookie_headers(code: &str, token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&format!("{}={token}", cookie_name(code))).unwrap(),
+        );
+        headers
+    }
+
+    fn htmx_cookie_headers(code: &str, token: &str) -> HeaderMap {
+        let mut headers = cookie_headers(code, token);
+        headers.insert("hx-request", HeaderValue::from_static("true"));
+        headers
+    }
+
+    fn level_form(level: &str) -> Form<HashMap<String, String>> {
+        Form(HashMap::from([("level".to_string(), level.to_string())]))
+    }
+
+    #[tokio::test]
+    async fn add_bot_rejects_an_unknown_difficulty() {
+        let app = test_app("bot-level");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+
+        let res = add_bot(
+            State(app.clone()),
+            Path(code.clone()),
+            cookie_headers(&code, &token),
+            level_form("godmode"),
+        )
+        .await;
+
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            room.data.lock().unwrap().members.len(),
+            1,
+            "an unknown level must not add a bot"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn add_bot_after_the_game_started_is_rejected() {
+        let app = test_app("bot-started");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        room.data.lock().unwrap().add_bot(BotLevel::Easy);
+        app.start_game(&room, &token).unwrap();
+        let before = room.data.lock().unwrap().members.len();
+
+        let res = add_bot(
+            State(app.clone()),
+            Path(code.clone()),
+            cookie_headers(&code, &token),
+            level_form("easy"),
+        )
+        .await;
+
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            room.data.lock().unwrap().members.len(),
+            before,
+            "a started game must not accept another bot"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn add_bot_htmx_failure_renders_a_toast() {
+        let app = test_app("bot-toast");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        room.data.lock().unwrap().add_bot(BotLevel::Easy);
+        app.start_game(&room, &token).unwrap();
+
+        let res = add_bot(
+            State(app.clone()),
+            Path(code.clone()),
+            htmx_cookie_headers(&code, &token),
+            level_form("easy"),
+        )
+        .await;
+
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(
+            res.headers().get("hx-retarget").is_none(),
+            "a trigger-relative retarget breaks once SSE replaces the trigger"
+        );
+        assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
+        let body = body_string(res).await;
+        assert!(body.contains(r#"id="toasts""#), "the toast must target #toasts: {body}");
+        assert!(body.contains(r#"hx-swap-oob="true""#), "the toast must be out of band: {body}");
+        assert!(
+            body.contains("already started"),
+            "the toast must explain why the bot was not added: {body}"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn set_layout_rejects_an_unknown_layout() {
+        let app = test_app("layout-unknown");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+
+        let res = set_layout(
+            State(app.clone()),
+            Path(code.clone()),
+            cookie_headers(&code, &token),
+            Form(HashMap::from([("layout".into(), "banana".into())])),
+        )
+        .await;
+
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            room.data.lock().unwrap().members[0].layout,
+            Layout::Classic,
+            "an unknown layout must not change the viewer's layout"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn set_layout_accepts_board_and_classic() {
+        let app = test_app("layout-valid");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        for (value, expected) in [("board", Layout::Board), ("classic", Layout::Classic)] {
+            let res = set_layout(
+                State(app.clone()),
+                Path(code.clone()),
+                cookie_headers(&code, &token),
+                Form(HashMap::from([("layout".into(), value.into())])),
+            )
+            .await;
+            assert_eq!(res.status(), StatusCode::NO_CONTENT);
+            assert_eq!(room.data.lock().unwrap().members[0].layout, expected);
+        }
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn responses_carry_security_headers_and_robots_is_served() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("headers");
+        let res = router(app.clone())
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        for name in [
+            "strict-transport-security",
+            "content-security-policy",
+            "x-content-type-options",
+            "x-frame-options",
+            "referrer-policy",
+            "permissions-policy",
+        ] {
+            assert!(res.headers().contains_key(name), "missing {name}");
+        }
+
+        let res = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/robots.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("User-agent: *"), "body was {body:?}");
+        assert!(body.contains("Disallow: /room/"), "private rooms stay unlisted");
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
     #[tokio::test]
