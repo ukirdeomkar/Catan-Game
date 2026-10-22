@@ -70,6 +70,16 @@
   document.addEventListener("htmx:afterSwap", apply);
   document.addEventListener("htmx:sseMessage", apply);
 
+  // ---- Error toast clearing ------------------------------------------------
+  // A successful action returns `HX-Trigger-After-Swap: catan:clear-toasts`.
+  // htmx dispatches that event on <body> when the SSE swap detached the
+  // element that started the request, so the clear still lands even though an
+  // out-of-band `#toasts` swap would have had no target.
+  document.addEventListener("catan:clear-toasts", function () {
+    var box = document.getElementById("toasts");
+    if (box) box.innerHTML = "";
+  });
+
   // ---- Dice roll animation -------------------------------------------------
   var rollHoldUntil = 0;
   document.addEventListener("click", function (e) {
