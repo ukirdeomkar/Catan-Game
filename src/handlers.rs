@@ -2,7 +2,7 @@ use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
 use crate::game::state::{BotLevel, GameState};
 use crate::render;
-use crate::state::{AppState, JoinError, Layout, Room, ViewMode, now_ms};
+use crate::state::{AppState, JoinError, Layout, Room, SeatOutcome, ViewMode, now_ms};
 use axum::{
     extract::{Form, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
@@ -834,8 +834,9 @@ async fn remove_player(
     }
 }
 
-/// A non-host player leaves the room. Their slot is freed in the lobby, and
-/// mid-game the game ends for everyone.
+/// A player leaves the room. In the lobby the slot is freed (and the host is
+/// handed on, or the room closes if nobody is left); mid-game the game ends for
+/// everyone, the host included.
 async fn leave_player(
     State(app): State<Arc<AppState>>,
     Path(code): Path<String>,
@@ -853,27 +854,32 @@ async fn leave_player(
         data.leave(&token)
     };
     match outcome {
+        Ok(SeatOutcome::Closed { .. }) => {
+            // Only bots are left, so drop the room. If a human joined in the
+            // meantime the registry re-check keeps it alive with a new host.
+            app.close_room_if_empty(&code);
+        }
         Ok(_) => {
             room.bump();
             app.persist(&room);
-            // Send them out of the room, and expire the room's cookie so a
-            // stray reload lands on the home page instead of a dead seat. The
-            // `gone` SSE event is the second half of that navigation for a tab
-            // that is still open.
-            let (h, v) = clear_cookie_header(&code);
-            (
-                StatusCode::OK,
-                [
-                    (h, v),
-                    (header::HeaderName::from_static("hx-retarget"), "#toasts".to_string()),
-                    (header::HeaderName::from_static("hx-redirect"), "/".to_string()),
-                ],
-                Html(String::new()),
-            )
-                .into_response()
         }
-        Err(msg) => toast(&msg),
+        Err(msg) => return toast(&msg),
     }
+    // Send them out of the room, and expire the room's cookie so a stray
+    // reload lands on the home page instead of a dead seat. The `gone` SSE
+    // event is the second half of that navigation for a tab that is still
+    // open.
+    let (h, v) = clear_cookie_header(&code);
+    (
+        StatusCode::OK,
+        [
+            (h, v),
+            (header::HeaderName::from_static("hx-retarget"), "#toasts".to_string()),
+            (header::HeaderName::from_static("hx-redirect"), "/".to_string()),
+        ],
+        Html(String::new()),
+    )
+        .into_response()
 }
 
 /// Empty 200 with the swap pointed at `#toasts`, so htmx clears any stale

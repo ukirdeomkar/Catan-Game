@@ -763,6 +763,10 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
                 @if data.members.len() < 2 {
                     p.muted style="margin:10px 0 0" { "Need at least 2 players to start." }
                 }
+                form.pact hx-post=(leave_url) style="margin-top:10px"
+                    onsubmit="return confirm('Leave this room? The next human becomes host. If only bots remain, the room closes.')" {
+                    button.btn.sec.tiny type="submit" title="Leave this room" { (ic("x")) "Leave room" }
+                }
             }
         } @else {
             div.card {
@@ -1028,8 +1032,8 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                     }
                 }
                 // Host-only remove (never themselves) and a Leave option for
-                // every non-host. The confirm matters: mid-game both actions
-                // end the game for everybody in the room.
+                // every player, host included. The confirm matters: mid-game
+                // both actions end the game for everybody in the room.
                 @if !left {
                     @if i_am_host && !is_me {
                         form.pact hx-post=(remove_url) hx-vals=(format!(r#"{{"player":"{pid}"}}"#))
@@ -1039,7 +1043,7 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                                 (ic("trash")) "Remove"
                             }
                         }
-                    } @else if is_me && !i_am_host {
+                    } @else if is_me {
                         form.pact hx-post=(leave_url)
                             onsubmit="return confirm('Leave the game? It ends for everyone.')" {
                             button.btn.sec.tiny type="submit" title="Leave the game" {
