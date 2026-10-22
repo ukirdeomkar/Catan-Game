@@ -2,7 +2,7 @@ use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
 use crate::game::state::{BotLevel, GameState, MAX_PLAYERS};
 use crate::render;
-use crate::state::{AppState, JoinError, Layout, Room, SeatOutcome, ViewMode, now_ms};
+use crate::state::{AppState, JoinError, Layout, LeaveChoice, Room, SeatOutcome, ViewMode, now_ms};
 use axum::{
     extract::{Form, Path, Query, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
@@ -933,13 +933,25 @@ async fn remove_player(
     }
 }
 
+/// The leave form. Both fields are optional so the older single-button forms
+/// (and a plain empty POST) still take the safe default: end the game mid-game,
+/// auto-pick the next host in the lobby.
+#[derive(Debug, Default, serde::Deserialize)]
+struct LeaveForm {
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    next_host: Option<usize>,
+}
+
 /// A player leaves the room. In the lobby the slot is freed (and the host is
-/// handed on, or the room closes if nobody is left); mid-game the game ends for
-/// everyone, the host included.
+/// handed to the chosen human, or the room closes if nobody is left). Mid-game
+/// the leaver picks between ending the game and a bot takeover.
 async fn leave_player(
     State(app): State<Arc<AppState>>,
     Path(code): Path<String>,
     headers: HeaderMap,
+    Form(form): Form<LeaveForm>,
 ) -> Response {
     let code = code.to_uppercase();
     let Some(room) = app.room(&code) else {
@@ -948,9 +960,14 @@ async fn leave_player(
     let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
         return toast("Your session expired. Reload the page.");
     };
+    let choice = match form.mode.as_deref() {
+        None | Some("end") => LeaveChoice::End,
+        Some("bot") => LeaveChoice::Bot,
+        Some(_) => return toast("Choose how to leave the game."),
+    };
     let outcome = {
         let mut data = room.data.lock().unwrap();
-        data.leave(&token)
+        data.leave_with(&token, choice, form.next_host)
     };
     match outcome {
         Ok(SeatOutcome::Closed { .. }) => {
@@ -1415,6 +1432,132 @@ mod tests {
             "the currently-shown move must be highlighted"
         );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    // --- leave UX v2 (issue #309) ----------------------------------------
+
+    #[test]
+    fn lobby_host_leave_picker_lists_humans_and_moves_the_controls() {
+        let app = test_app("leave-picker");
+        let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        let (_, carol) = app.join(&code, "Carol".into()).unwrap();
+
+        let (alice_html, carol_html_before, carol_idx) = {
+            let data = room.data.lock().unwrap();
+            (
+                render::lobby_frag(&code, &data, &alice).into_string(),
+                render::lobby_frag(&code, &data, &carol).into_string(),
+                data.member_index(&carol).unwrap(),
+            )
+        };
+        assert!(
+            alice_html.contains("name=\"next_host\""),
+            "the host must pick the successor explicitly"
+        );
+        let picker = alice_html
+            .split("name=\"next_host\"")
+            .nth(1)
+            .expect("next-host select")
+            .split("</select>")
+            .next()
+            .unwrap();
+        assert!(picker.contains("Bob") && picker.contains("Carol"));
+        assert!(!picker.contains("Bot 1"), "bots can never inherit the badge");
+        assert!(
+            !carol_html_before.contains("Host controls"),
+            "only the host sees host controls before the transfer"
+        );
+
+        room.data
+            .lock()
+            .unwrap()
+            .leave_with(&alice, LeaveChoice::End, Some(carol_idx))
+            .unwrap();
+        let (carol_html, bob_html) = {
+            let data = room.data.lock().unwrap();
+            (
+                render::lobby_frag(&code, &data, &carol).into_string(),
+                render::lobby_frag(&code, &data, &bob).into_string(),
+            )
+        };
+        assert!(
+            carol_html.contains("Host controls") && carol_html.contains("Start game"),
+            "the chosen host gets the controls on the next SSE fragment"
+        );
+        assert!(
+            !bob_html.contains("Host controls"),
+            "the skipped human does not get host controls"
+        );
+        let _ = app;
+        std::fs::remove_dir_all(app.data_dir.clone()).ok();
+    }
+
+    #[test]
+    fn midgame_leave_fragments_offer_end_or_bot_takeover() {
+        let app = test_app("leave-choices");
+        let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        app.start_game(&room, &alice).unwrap();
+        let (alice_seat, bob_seat) = {
+            let data = room.data.lock().unwrap();
+            (
+                data.member_index(&alice).unwrap(),
+                data.member_index(&bob).unwrap(),
+            )
+        };
+
+        let (bob_html, alice_html) = {
+            let data = room.data.lock().unwrap();
+            let game = data.game.as_ref().unwrap();
+            (
+                render::fragments(game, &data, Some(bob_seat))
+                    .players
+                    .into_string(),
+                render::fragments(game, &data, Some(alice_seat))
+                    .players
+                    .into_string(),
+            )
+        };
+        for html in [&bob_html, &alice_html] {
+            assert!(html.contains("End game"), "every human can end the game");
+            assert!(
+                html.contains("Continue with bot"),
+                "every human can leave a bot behind"
+            );
+            assert!(html.contains("name=\"mode\" value=\"end\""));
+            assert!(html.contains("name=\"mode\" value=\"bot\""));
+        }
+        assert!(
+            alice_html.contains("name=\"next_host\""),
+            "a leaving host picks the next host on the continue path"
+        );
+        assert!(
+            !bob_html.contains("name=\"next_host\""),
+            "a non-host leaver does not pick a host"
+        );
+
+        // Only bots remain after the last human: end-game is the only choice.
+        let (room2, alice2) = app.create_room("Solo".into(), 0, false).unwrap();
+        room2.data.lock().unwrap().add_bot(BotLevel::Medium);
+        app.start_game(&room2, &alice2).unwrap();
+        let solo_html = {
+            let data = room2.data.lock().unwrap();
+            let game = data.game.as_ref().unwrap();
+            render::fragments(game, &data, Some(0))
+                .players
+                .into_string()
+        };
+        assert!(solo_html.contains("End game"));
+        assert!(
+            !solo_html.contains("Continue with bot"),
+            "with no other humans, a bot takeover is not offered"
+        );
+        let _ = app;
+        std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
 
     /// Test helper for manual/browser QA of the replay: writes a finished game

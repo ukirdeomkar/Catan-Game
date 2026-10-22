@@ -194,9 +194,21 @@ pub enum SeatOutcome {
     Lobby { name: String },
     /// The game was running, so it ended for everyone in the room.
     Ended { name: String },
+    /// The seat was handed to a bot and the game carries on.
+    Continued { name: String },
     /// The last human left the lobby, so there is nobody left to play with.
     /// The caller must drop the room from the registry.
     Closed { name: String },
+}
+
+/// How a human chose to leave a live game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LeaveChoice {
+    /// End the game for everyone (the existing abandoned path).
+    #[default]
+    End,
+    /// Leave the seat playable: a Medium bot keeps everything and continues.
+    Bot,
 }
 
 impl RoomData {
@@ -239,26 +251,94 @@ impl RoomData {
         Ok(self.empty_seat(target, format!("{name} was removed by the host.")))
     }
 
-    /// A player leaves the room. In the lobby the host seat is handed to the
-    /// longest-present remaining human; if no human is left the room closes.
-    /// Mid-game any leaver, host included, ends the game for everyone.
+    /// Token of the human who should take the host badge. An explicit pick wins
+    /// as long as it is a real human other than the leaver; otherwise the
+    /// longest-present remaining human (first in join order) is used.
+    fn next_host_token(&self, leaver: usize, requested: Option<usize>) -> Option<String> {
+        let humans = || {
+            self.members
+                .iter()
+                .enumerate()
+                .filter(|(idx, m)| *idx != leaver && !m.is_bot)
+        };
+        let picked = requested
+            .filter(|idx| humans().any(|(i, _)| i == *idx))
+            .or_else(|| humans().next().map(|(i, _)| i));
+        picked.map(|idx| self.members[idx].token.clone())
+    }
+
+    /// Turn an occupied seat into a Medium bot without touching its game state.
+    /// The leaver's session token is rotated so the old cookie is dead; the game
+    /// keeps running and the bot starts taking turns normally.
+    fn bot_takeover(&mut self, idx: usize) -> SeatOutcome {
+        let name = self.members[idx].name.clone();
+        if let Some(game) = self.game.as_mut() {
+            game.players[idx].is_bot = true;
+            game.push_log(None, format!("{name} left — a bot takes over."));
+        }
+        let seat = &mut self.members[idx];
+        seat.is_bot = true;
+        seat.level = BotLevel::Medium;
+        seat.connected = false;
+        seat.left = false;
+        seat.token = new_token();
+        SeatOutcome::Continued { name }
+    }
+
+    /// A player leaves the room with the default choice: mid-game the game ends
+    /// for everyone, and in the lobby the next host is auto-picked.
     pub fn leave(&mut self, token: &str) -> Result<SeatOutcome, String> {
+        self.leave_with(token, LeaveChoice::End, None)
+    }
+
+    /// A player leaves the room with an explicit choice.
+    ///
+    /// In the lobby the host seat is handed to `next_host` (default: the
+    /// longest-present remaining human); if no human is left the room closes.
+    /// Mid-game `LeaveChoice::End` keeps the abandoned path, while
+    /// `LeaveChoice::Bot` hands the seat to a Medium bot and keeps the game
+    /// running. A host taking the bot path transfers the badge first.
+    pub fn leave_with(
+        &mut self,
+        token: &str,
+        choice: LeaveChoice,
+        next_host: Option<usize>,
+    ) -> Result<SeatOutcome, String> {
         let Some(idx) = self.member_index(token) else {
             return Err("You are not a member of this room.".into());
         };
         let name = self.members[idx].name.clone();
         let was_host = self.is_host(token);
-        let why = if was_host && self.game.is_some() {
-            "Host left the game.".to_string()
-        } else {
-            format!("{name} left the game.")
-        };
-        let outcome = self.empty_seat(idx, why);
-        if was_host && matches!(outcome, SeatOutcome::Lobby { .. }) {
-            // Members keep join order, so the first remaining human is the
-            // longest-present one.
-            match self.members.iter().position(|m| !m.is_bot) {
-                Some(next) => self.host_token = self.members[next].token.clone(),
+        let successor = self.next_host_token(idx, next_host);
+
+        if self.game.is_some() {
+            return match choice {
+                LeaveChoice::End => {
+                    let why = if was_host {
+                        "Host left the game.".to_string()
+                    } else {
+                        format!("{name} left the game.")
+                    };
+                    Ok(self.empty_seat(idx, why))
+                }
+                LeaveChoice::Bot => {
+                    let Some(successor) = successor else {
+                        return Err(
+                            "Only End the game is available when no other humans remain.".into(),
+                        );
+                    };
+                    if was_host {
+                        self.host_token = successor;
+                    }
+                    Ok(self.bot_takeover(idx))
+                }
+            };
+        }
+
+        let outcome = self.empty_seat(idx, format!("{name} left the game."));
+        if was_host {
+            match successor {
+                Some(successor) => self.host_token = successor,
                 None => return Ok(SeatOutcome::Closed { name }),
             }
         }
@@ -1174,6 +1254,37 @@ mod tests {
     }
 
     #[test]
+    fn host_leave_in_lobby_honours_an_explicit_next_host() {
+        let (app, room, alice, bob, dir) = two_players("host-leave-picked");
+        let code = room_code(&room);
+        let (_, carol) = app.join(&code, "Carol".into()).unwrap();
+
+        let (outcome, bob_idx, carol_idx) = {
+            let mut data = room.data.lock().unwrap();
+            let bob_idx = data.member_index(&bob).unwrap();
+            let carol_idx = data.member_index(&carol).unwrap();
+            let outcome = data.leave_with(&alice, LeaveChoice::End, Some(carol_idx));
+            (outcome, bob_idx, carol_idx)
+        };
+        assert_eq!(outcome, Ok(SeatOutcome::Lobby { name: "Alice".into() }));
+
+        let data = room.data.lock().unwrap();
+        assert_eq!(
+            data.host_token, carol,
+            "the host's explicit pick becomes the next host"
+        );
+        assert!(data.is_host(&carol));
+        assert!(
+            !data.is_host(&bob),
+            "the longest-present human is only the default, not the rule"
+        );
+        assert!(carol_idx > bob_idx, "the test picked the later human");
+        drop(data);
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn host_leave_in_lobby_with_only_bots_closes_the_room() {
         let (app, room, alice, bob, dir) = two_players("host-leave-bots");
         let code = room_code(&room);
@@ -1321,6 +1432,186 @@ mod tests {
         assert!(data.member_index(&bob).is_none());
         assert!(data.member_index(&alice).is_some());
         drop(data);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn leave_midgame_with_bot_takeover_keeps_the_seat_and_the_game() {
+        let (app, room, alice, bob, dir) = two_players("leave-mid-bot");
+        app.start_game(&room, &alice).unwrap();
+        let bob_seat = room.data.lock().unwrap().member_index(&bob).unwrap();
+        let before = {
+            let mut data = room.data.lock().unwrap();
+            let game = data.game.as_mut().unwrap();
+            game.players[bob_seat]
+                .resources
+                .add(crate::game::resources::Resource::Wood, 3);
+            game.players[bob_seat]
+                .dev_cards
+                .push(crate::game::resources::DevCard::Knight);
+            game.players[bob_seat].revealed_vp = 1;
+            (
+                game.total_victory_points(bob_seat),
+                game.players[bob_seat].resources.total(),
+                game.players[bob_seat].all_dev_cards().count(),
+            )
+        };
+
+        let outcome = room
+            .data
+            .lock()
+            .unwrap()
+            .leave_with(&bob, LeaveChoice::Bot, None);
+        assert_eq!(outcome, Ok(SeatOutcome::Continued { name: "Bob".into() }));
+
+        let data = room.data.lock().unwrap();
+        let game = data.game.as_ref().unwrap();
+        assert!(!game.is_over(), "the game keeps running for everyone else");
+        let seat = &data.members[bob_seat];
+        assert!(seat.is_bot, "the seat becomes a bot");
+        assert!(!seat.left, "the seat is live, not emptied");
+        assert_eq!(seat.level, BotLevel::Medium, "takeover uses a Medium bot");
+        assert!(
+            game.players[bob_seat].is_bot,
+            "the engine also treats the player as a bot (grudges, AI turns)"
+        );
+        assert_eq!(data.members.len(), 2, "seats are never re-indexed");
+        assert_eq!(
+            (
+                game.total_victory_points(bob_seat),
+                game.players[bob_seat].resources.total(),
+                game.players[bob_seat].all_dev_cards().count(),
+            ),
+            before,
+            "the bot keeps the leaver's resources, dev cards and VP"
+        );
+        assert!(
+            game.log
+                .iter()
+                .any(|l| l.text.contains("Bob left — a bot takes over.")),
+            "the shared log announces the takeover"
+        );
+        assert!(
+            data.member_index(&bob).is_none(),
+            "the old session token is dead"
+        );
+        assert!(data.member_index(&alice).is_some(), "the other human stays");
+        drop(data);
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn host_leave_midgame_with_bot_takeover_transfers_the_badge_first() {
+        let (app, room, alice, bob, dir) = two_players("host-leave-mid-bot");
+        let code = room_code(&room);
+        let (_, carol) = app.join(&code, "Carol".into()).unwrap();
+        app.start_game(&room, &alice).unwrap();
+        let alice_seat = room.data.lock().unwrap().member_index(&alice).unwrap();
+
+        let (outcome, carol_idx) = {
+            let mut data = room.data.lock().unwrap();
+            let carol_idx = data.member_index(&carol).unwrap();
+            let outcome = data.leave_with(&alice, LeaveChoice::Bot, Some(carol_idx));
+            (outcome, carol_idx)
+        };
+        assert_eq!(outcome, Ok(SeatOutcome::Continued { name: "Alice".into() }));
+
+        let data = room.data.lock().unwrap();
+        let game = data.game.as_ref().unwrap();
+        assert!(!game.is_over(), "the host's leave does not end the game");
+        assert_eq!(
+            data.host_token, carol,
+            "the badge moves to the chosen human before the seat becomes a bot"
+        );
+        assert!(data.is_host(&carol));
+        assert!(data.members[alice_seat].is_bot, "the old host seat is a bot");
+        assert!(game.players[alice_seat].is_bot);
+        assert_eq!(data.members[carol_idx].is_bot, false, "Carol stays human");
+        assert!(
+            game.log
+                .iter()
+                .any(|l| l.text.contains("Alice left — a bot takes over.")),
+            "the log names the takeover"
+        );
+        drop(data);
+
+        assert_eq!(
+            app.join(&code, "Alice".into()).map(|(_, token)| token),
+            Err(JoinError::AlreadyStarted),
+            "the leaver cannot rejoin a seat that a bot now owns"
+        );
+        let _ = bob;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn midgame_bot_takeover_needs_another_human() {
+        let (app, dir) = app("leave-mid-alone");
+        let (room, alice) = app.create_room("Alice".into(), 180, true).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::Medium);
+        app.start_game(&room, &alice).unwrap();
+
+        let err = room
+            .data
+            .lock()
+            .unwrap()
+            .leave_with(&alice, LeaveChoice::Bot, None);
+        assert_eq!(
+            err,
+            Err("Only End the game is available when no other humans remain.".into())
+        );
+        {
+            let data = room.data.lock().unwrap();
+            assert!(
+                !data.game.as_ref().unwrap().is_over(),
+                "a refused takeover leaves the game intact"
+            );
+            assert!(data.member_index(&alice).is_some());
+        }
+
+        let ended = room
+            .data
+            .lock()
+            .unwrap()
+            .leave_with(&alice, LeaveChoice::End, None);
+        assert_eq!(ended, Ok(SeatOutcome::Ended { name: "Alice".into() }));
+        assert!(room.data.lock().unwrap().game.as_ref().unwrap().is_over());
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_bot_takeover_takes_its_turn() {
+        let (app, room, alice, bob, dir) = two_players("bot-takeover-turn");
+        app.start_game(&room, &alice).unwrap();
+        // Hand over whichever seat the engine is waiting on in setup.
+        let (token, pid) = {
+            let data = room.data.lock().unwrap();
+            let game = data.game.as_ref().unwrap();
+            let pid = game.setup_queue[game.setup_pos];
+            (data.members[pid].token.clone(), pid)
+        };
+        room.data
+            .lock()
+            .unwrap()
+            .leave_with(&token, LeaveChoice::Bot, None)
+            .unwrap();
+
+        // The first tick arms the first-action delay; the second acts.
+        tick_bots(&app);
+        room.data.lock().unwrap().bot_next_ms = 0;
+        let before = room.data.lock().unwrap().game.as_ref().unwrap().moves.len();
+        tick_bots(&app);
+        let data = room.data.lock().unwrap();
+        let game = data.game.as_ref().unwrap();
+        assert!(
+            game.moves.len() > before,
+            "the bot plays the seat's turn without a human"
+        );
+        assert!(data.members[pid].is_bot);
+        drop(data);
+        let _ = bob;
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -713,6 +713,16 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
     let remove_url = format!("/room/{code}/remove");
     let leave_url = format!("/room/{code}/leave");
     let add_bot_url = format!("/room/{code}/add_bot");
+    let host_idx = data.member_index(token);
+    // Join order is presence order, so the first entry is the default (the
+    // longest-present human). Bots can never inherit the badge.
+    let next_hosts: Vec<usize> = data
+        .members
+        .iter()
+        .enumerate()
+        .filter(|(idx, m)| Some(*idx) != host_idx && !m.is_bot)
+        .map(|(idx, _)| idx)
+        .collect();
     html! {
         div.card {
             h3 { (ic("users")) "Players (" (data.members.len()) "/4)" }
@@ -767,9 +777,25 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
                 @if data.members.len() < 2 {
                     p.muted style="margin:10px 0 0" { "Need at least 2 players to start." }
                 }
-                form.pact hx-post=(leave_url) style="margin-top:10px"
-                    onsubmit="return confirm('Leave this room? The next human becomes host. If only bots remain, the room closes.')" {
-                    button.btn.sec.tiny type="submit" title="Leave this room" { (ic("x")) "Leave room" }
+                @if next_hosts.is_empty() {
+                    form.pact hx-post=(leave_url) style="margin-top:10px"
+                        onsubmit="return confirm('Close this room? No other humans are left.')" {
+                        button.btn.sec.tiny type="submit" title="Close this room" { (ic("x")) "Close room" }
+                    }
+                } @else {
+                    form.pact.leavehost hx-post=(leave_url) style="margin-top:10px"
+                        onsubmit="return confirm('Leave this room and hand the host badge to the player you picked?')" {
+                        label.field {
+                            span { "Next host" }
+                            select name="next_host" {
+                                @for idx in &next_hosts {
+                                    @let m = &data.members[*idx];
+                                    option value=(*idx) { (m.name) }
+                                }
+                            }
+                        }
+                        button.btn.sec.tiny type="submit" title="Leave this room" { (ic("x")) "Leave room" }
+                    }
                 }
             }
         } @else {
@@ -981,6 +1007,27 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
     let i_am_host = my_token.as_deref().is_some_and(|t| data.is_host(t));
     let remove_url = format!("/room/{}/remove", data.code);
     let leave_url = format!("/room/{}/leave", data.code);
+    let other_humans: Vec<usize> = data
+        .members
+        .iter()
+        .enumerate()
+        .filter(|(idx, m)| Some(*idx) != viewer && !m.is_bot)
+        .map(|(idx, _)| idx)
+        .collect();
+    let game_over = game.is_over();
+    // After the game is over there is nothing for a bot to take over, so the
+    // only option is to leave.
+    let leave_label = if game_over { "Leave" } else { "End game" };
+    let leave_confirm = if game_over {
+        "Leave this finished game?"
+    } else {
+        "Leave and end the game for everyone?"
+    };
+    let leave_title = if game_over {
+        "Leave the finished game"
+    } else {
+        "Leave and end the game"
+    };
     html! {
         @for pid in order {
             @let p = &game.players[pid];
@@ -1035,9 +1082,9 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                         }
                     }
                 }
-                // Host-only remove (never themselves) and a Leave option for
-                // every player, host included. The confirm matters: mid-game
-                // both actions end the game for everybody in the room.
+                // Host-only remove (never themselves) and explicit leave
+                // choices for the viewer, host included. Remove still ends the
+                // game; leave offers end-game or a Medium-bot takeover.
                 @if !left {
                     @if i_am_host && !is_me {
                         form.pact hx-post=(remove_url) hx-vals=(format!(r#"{{"player":"{pid}"}}"#))
@@ -1048,10 +1095,31 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                             }
                         }
                     } @else if is_me {
-                        form.pact hx-post=(leave_url)
-                            onsubmit="return confirm('Leave the game? It ends for everyone.')" {
-                            button.btn.sec.tiny type="submit" title="Leave the game" {
-                                (ic("x")) "Leave"
+                        form.pact hx-post=(leave_url) data-leave="end"
+                            onsubmit=(format!("return confirm('{leave_confirm}')")) {
+                            input type="hidden" name="mode" value="end";
+                            button.btn.warn.tiny type="submit" title=(leave_title) {
+                                (ic("x")) (leave_label)
+                            }
+                        }
+                        @if !other_humans.is_empty() && !game_over {
+                            form.pact hx-post=(leave_url) data-leave="bot"
+                                onsubmit="return confirm('Leave and let a Medium bot take over your seat?')" {
+                                input type="hidden" name="mode" value="bot";
+                                @if i_am_host {
+                                    label.leave-next {
+                                        span { "Next host" }
+                                        select name="next_host" {
+                                            @for idx in &other_humans {
+                                                @let m = &data.members[*idx];
+                                                option value=(*idx) { (m.name) }
+                                            }
+                                        }
+                                    }
+                                }
+                                button.btn.sec.tiny type="submit" title="Leave and let a bot continue your seat" {
+                                    (ic("users")) "Continue with bot"
+                                }
                             }
                         }
                     }
