@@ -689,6 +689,9 @@ pub fn privacy_page() -> Markup {
 pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
     shell("Lobby", html! {
         div.wrap.page {
+            // Stable target for the remove/leave error toasts. It lives outside
+            // the SSE-swapped lobby fragment so it survives player-list swaps.
+            div #toasts.toasts {}
             div.hero {
                 h1 { "Lobby" }
                 p.muted { "Share this room code with friends" }

@@ -469,16 +469,9 @@ async fn action(
             if let Some((id, deadline)) = pending_expiry {
                 spawn_trade_expiry(room.clone(), app.clone(), id, deadline);
             }
-            // Empty body so htmx clears any stale error toast. The retarget
-            // header keeps the swap pointed at #toasts even though the action
-            // was triggered from a board/controls element inside the SSE-swapped
-            // fragments (which no longer inherit a target from #app).
-            (
-                StatusCode::OK,
-                [(header::HeaderName::from_static("hx-retarget"), "#toasts")],
-                Html(String::new()),
-            )
-                .into_response()
+            // The board/controls themselves arrive over SSE; this response
+            // only clears a stale error toast out of band.
+            cleared()
         }
         Err(msg) => toast(&msg),
     }
@@ -874,7 +867,6 @@ async fn leave_player(
         StatusCode::OK,
         [
             (h, v),
-            (header::HeaderName::from_static("hx-retarget"), "#toasts".to_string()),
             (header::HeaderName::from_static("hx-redirect"), "/".to_string()),
         ],
         Html(String::new()),
@@ -882,23 +874,35 @@ async fn leave_player(
         .into_response()
 }
 
-/// Empty 200 with the swap pointed at `#toasts`, so htmx clears any stale
-/// error instead of leaving it on screen.
+/// Empty `#toasts` swap, so htmx clears any stale error instead of leaving it
+/// on screen.
 fn cleared() -> Response {
-    (
-        StatusCode::OK,
-        [(header::HeaderName::from_static("hx-retarget"), "#toasts".to_string())],
-        Html(String::new()),
-    )
-        .into_response()
+    let body = maud::html! { div #toasts.toasts hx-swap-oob="true" {} }.into_string();
+    oob_only(body)
 }
 
 fn toast(msg: &str) -> Response {
-    let body = maud::html! { (msg) }.into_string();
+    let body = maud::html! { div #toasts.toasts hx-swap-oob="true" { (msg) } }.into_string();
+    oob_only(body)
+}
+
+/// Return a body that only performs out-of-band swaps.
+///
+/// `HX-Retarget` is resolved relative to the *triggering* element's root. A
+/// button inside a board, controls, or lobby fragment can be detached by the
+/// SSE swap before the POST response lands; the retarget then resolves to
+/// `null` and htmx throws while adding its swapping class. An out-of-band swap
+/// is looked up from the document instead, so it does not care whether the
+/// trigger is still attached. `HX-Reswap: none` keeps htmx from also swapping
+/// this fragment into the (possibly detached) trigger.
+fn oob_only(body: String) -> Response {
     (
         StatusCode::OK,
-        [(header::HeaderName::from_static("hx-retarget"), "#toasts")],
-        Html(body),
+        [
+            (header::HeaderName::from_static("hx-reswap"), "none"),
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        ],
+        body,
     )
         .into_response()
 }
@@ -917,6 +921,48 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("catan-how-to-play-test-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         AppState::new(dir)
+    }
+
+    #[tokio::test]
+    async fn toast_swaps_out_of_band_instead_of_retargeting_the_trigger() {
+        let res = toast("Boom");
+        assert!(
+            res.headers().get("hx-retarget").is_none(),
+            "a trigger-relative retarget breaks once SSE replaces the trigger"
+        );
+        assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
+        let body = body_string(res).await;
+        assert!(body.contains(r#"id="toasts""#), "the toast must target #toasts: {body}");
+        assert!(body.contains(r#"hx-swap-oob="true""#), "the toast must be out of band: {body}");
+        assert!(body.contains("Boom"), "the toast must carry the message: {body}");
+    }
+
+    #[tokio::test]
+    async fn cleared_swaps_an_empty_toast_container() {
+        let res = cleared();
+        assert!(res.headers().get("hx-retarget").is_none());
+        assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
+        let body = body_string(res).await;
+        assert!(body.contains(r#"id="toasts""#), "the clear must target #toasts: {body}");
+        assert!(body.contains(r#"hx-swap-oob="true""#), "the clear must be out of band: {body}");
+        assert!(
+            !body.contains("Boom"),
+            "clearing must leave the container empty: {body}"
+        );
+    }
+
+    #[test]
+    fn lobby_has_a_stable_toast_container() {
+        let app = test_app("lobby-toast");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let data = room.data.lock().unwrap();
+        let page = render::lobby_page(&data.code, &data, &token).into_string();
+        drop(data);
+        assert!(
+            page.contains(r#"id="toasts""#),
+            "lobby errors need a persistent #toasts target"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
     async fn guide(app: &Arc<AppState>, room: &str) -> String {
