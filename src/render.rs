@@ -1,9 +1,10 @@
+use crate::game::actions::Action;
 use crate::game::board::{Board, Building, PortKind, Terrain};
 use crate::game::resources::{
     ALL_RESOURCES, Bundle, COST_CITY, COST_DEV, COST_ROAD, COST_SETTLEMENT, DevCard, Resource,
     ResourceHand,
 };
-use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerId, TradeResponse};
+use crate::game::state::{BotLevel, Color, GameState, Move, Phase, PlayerId, TradeResponse};
 use crate::state::{Layout, RoomData, ViewMode, now_ms};
 use maud::{DOCTYPE, Markup, html};
 
@@ -254,6 +255,7 @@ fn head_common(title: &str) -> Markup {
             meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
             script src=(asset("/static/htmx.min.js")) defer {}
             script src=(asset("/static/sse.js")) defer {}
+            script src=(asset("/static/session.js")) defer {}
             script src=(asset("/static/timer.js")) defer {}
             script src=(asset("/static/trade.js")) defer {}
             script src=(asset("/static/ui.js")) defer {}
@@ -687,6 +689,9 @@ pub fn privacy_page() -> Markup {
 pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
     shell("Lobby", html! {
         div.wrap.page {
+            // Stable target for the remove/leave error toasts. It lives outside
+            // the SSE-swapped lobby fragment so it survives player-list swaps.
+            div #toasts.toasts {}
             div.hero {
                 h1 { "Lobby" }
                 p.muted { "Share this room code with friends" }
@@ -705,19 +710,33 @@ pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
 
 pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
     let is_host = data.is_host(token);
+    let remove_url = format!("/room/{code}/remove");
+    let leave_url = format!("/room/{code}/leave");
     let add_bot_url = format!("/room/{code}/add_bot");
     html! {
         div.card {
             h3 { (ic("users")) "Players (" (data.members.len()) "/4)" }
             div.players {
-                @for m in &data.members {
+                @for (idx, m) in data.members.iter().enumerate() {
                     div.pcard {
                         span.pdot style=(format!("background:{}", color_hex(m.color))) {}
-                        div.pname { (m.name) }
-                        @if data.is_host(&m.token) || m.is_bot {
+                        div.pname title=(m.name.as_str()) { (m.name) }
+                        @if data.is_host(&m.token) || m.is_bot || m.left {
                             div.pbadges {
                                 @if data.is_host(&m.token) { span { "host" } }
                                 @if m.is_bot { span { "bot " (m.level.label()) } }
+                                @if m.left { span { "left" } }
+                            }
+                        }
+                        @if is_host && !data.is_host(&m.token) {
+                            // Host-only. The confirm keeps a mis-tap from
+                            // throwing somebody out of a full room.
+                            form.pact hx-post=(remove_url) hx-vals=(format!(r#"{{"player":"{idx}"}}"#))
+                                onsubmit="return confirm('Remove this player? Their seat is freed.')" {
+                                button.btn.warn.tiny type="submit"
+                                    title=(format!("Remove {}. Their seat is freed.", m.name)) {
+                                    (ic("trash")) "Remove"
+                                }
                             }
                         }
                     }
@@ -748,10 +767,18 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
                 @if data.members.len() < 2 {
                     p.muted style="margin:10px 0 0" { "Need at least 2 players to start." }
                 }
+                form.pact hx-post=(leave_url) style="margin-top:10px"
+                    onsubmit="return confirm('Leave this room? The next human becomes host. If only bots remain, the room closes.')" {
+                    button.btn.sec.tiny type="submit" title="Leave this room" { (ic("x")) "Leave room" }
+                }
             }
         } @else {
             div.card {
                 p.muted style="margin:0" { "Waiting for the host to start…" }
+                form.pact hx-post=(leave_url)
+                    onsubmit="return confirm('Leave this room? Your seat is freed.')" {
+                    button.btn.sec.tiny type="submit" title="Leave this room" { (ic("x")) "Leave room" }
+                }
             }
         }
     }
@@ -950,6 +977,10 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
         Some(v) => (0..n).map(|i| (v + i) % n).collect(),
         None => (0..n).collect(),
     };
+    let my_token = viewer.and_then(|v| data.members.get(v)).map(|m| m.token.clone());
+    let i_am_host = my_token.as_deref().is_some_and(|t| data.is_host(t));
+    let remove_url = format!("/room/{}/remove", data.code);
+    let leave_url = format!("/room/{}/leave", data.code);
     html! {
         @for pid in order {
             @let p = &game.players[pid];
@@ -957,12 +988,13 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
             @let is_turn = game.current == pid;
             @let is_light = matches!(p.color, Color::White);
             @let is_bot = data.members.get(pid).map(|m| m.is_bot).unwrap_or(false);
+            @let left = data.members.get(pid).map(|m| m.left).unwrap_or(false);
             @let shown_vp = if game.is_over() {
                 game.total_victory_points(pid)
             } else {
                 game.public_victory_points(pid)
             };
-            div.pcard.me[is_me].turn[is_turn].light[is_light] style=(format!("--pc:{}", color_hex(p.color))) {
+            div.pcard.me[is_me].turn[is_turn].light[is_light].gone[left] style=(format!("--pc:{}", color_hex(p.color))) {
                 div.phead {
                     span.pvp.revealed[game.is_over()] title="Victory points" { (ic("trophy")) (shown_vp) }
                     span.pname title=(p.name.as_str()) { (p.name) }
@@ -973,6 +1005,7 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                     span.stat title="Knights played" { (ic("shield")) (p.played_knights) }
                     @if game.longest_road == Some(pid) { span.stat title="Longest Road" { (ic("road")) } }
                     @if game.largest_army == Some(pid) { span.stat title="Largest Army" { (ic("army")) } }
+                    @if left { span.stat.gone title="Left the game" { (ic("x")) } }
                 }
                 @if is_turn && data.turn_seconds > 0 && data.turn_deadline_ms > 0
                     && matches!(game.phase, Phase::Play) {
@@ -998,6 +1031,27 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                                     span.ph-l { "gives" }
                                     @for r in &gives { span.ph-r { (res_glyph(*r)) } }
                                 }
+                            }
+                        }
+                    }
+                }
+                // Host-only remove (never themselves) and a Leave option for
+                // every player, host included. The confirm matters: mid-game
+                // both actions end the game for everybody in the room.
+                @if !left {
+                    @if i_am_host && !is_me {
+                        form.pact hx-post=(remove_url) hx-vals=(format!(r#"{{"player":"{pid}"}}"#))
+                            onsubmit="return confirm('Remove this player? The game ends for everyone.')" {
+                            button.btn.warn.tiny type="submit"
+                                title=(format!("Remove {}. The game ends for everyone.", p.name)) {
+                                (ic("trash")) "Remove"
+                            }
+                        }
+                    } @else if is_me {
+                        form.pact hx-post=(leave_url)
+                            onsubmit="return confirm('Leave the game? It ends for everyone.')" {
+                            button.btn.sec.tiny type="submit" title="Leave the game" {
+                                (ic("x")) "Leave"
                             }
                         }
                     }
@@ -1038,11 +1092,24 @@ fn hand_frag(game: &GameState, _code: &str, v: PlayerId, layout: Layout) -> Mark
 // Floating status pill
 // ---------------------------------------------------------------------------
 
-fn controls_frag(game: &GameState, _data: &RoomData, viewer: Option<PlayerId>) -> Markup {
+fn controls_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
     if matches!(game.phase, Phase::GameOver) {
-        let w = game.winner.unwrap_or(0);
-        return html! {
-            div.pill.win { (ic("trophy")) (game.players[w].name) " wins with " (game.total_victory_points(w)) " VP!" }
+        let replay = html! {
+            a.btn.sec.replay-open href=(format!("/room/{}/replay", data.code)) { (ic("info")) "Replay" }
+        };
+        return match game.winner {
+            Some(w) => html! {
+                div.pill.win {
+                    (ic("trophy")) (game.players[w].name) " wins with " (game.total_victory_points(w)) " VP!"
+                    (replay)
+                }
+            },
+            // Abandoned mid-game (a player left, or the host removed them):
+            // no winner, and the shared log names who ended it. The replay
+            // viewer is winner-agnostic, so it still works here.
+            None => html! {
+                div.pill.over { (ic("info")) "Game over — nobody wins." (replay) }
+            },
         };
     }
     let Some(v) = viewer else { return Markup::default() };
@@ -1566,12 +1633,176 @@ fn log_frag(game: &GameState) -> Markup {
 }
 
 // ---------------------------------------------------------------------------
+// End-of-game replay (issue #13)
+// ---------------------------------------------------------------------------
+
+/// Arrow-key stepping for the replay page. Progressive enhancement only: the
+/// prev/next links work on their own when JS is unavailable.
+const REPLAY_JS: &str = r#"
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  var sel = e.key === 'ArrowLeft' ? '[data-replay-prev]' : '[data-replay-next]';
+  var a = document.querySelector(sel);
+  if (a && a.getAttribute('href')) { e.preventDefault(); location.href = a.getAttribute('href'); }
+});
+"#;
+
+/// A short, human-readable description of a recorded move, without the actor.
+fn action_summary(action: &Action) -> String {
+    match action {
+        Action::PlaceSettlement { vertex } => format!("places a settlement (#{vertex})"),
+        Action::PlaceRoad { edge } => format!("places a road (#{edge})"),
+        Action::RollDice => "rolls the dice".to_string(),
+        Action::BuildRoad { edge } => format!("builds a road (#{edge})"),
+        Action::BuildSettlement { vertex } => format!("builds a settlement (#{vertex})"),
+        Action::BuildCity { vertex } => format!("upgrades to a city (#{vertex})"),
+        Action::BuyDevCard => "buys a development card".to_string(),
+        Action::PlayKnight => "plays a Knight".to_string(),
+        Action::PlayRoadBuilding => "plays Road Building".to_string(),
+        Action::PlayYearOfPlenty { first, second } => {
+            format!("plays Year of Plenty ({}, {})", first.name(), second.name())
+        }
+        Action::PlayMonopoly { resource } => format!("plays Monopoly on {}", resource.name()),
+        Action::RevealVictoryPoint => "reveals a Victory Point card".to_string(),
+        Action::MoveRobber { hex } => format!("moves the robber (#{hex})"),
+        Action::StealFrom { player } => match player {
+            Some(p) => format!("robs player {p}"),
+            None => "declines to rob".to_string(),
+        },
+        Action::Discard { resources } => format!("discards {}", bundle_text(resources)),
+        Action::BankTrade { give, want } => {
+            format!("trades {} for {} with the bank", give.name(), want.name())
+        }
+        Action::ProposeTrade { give, want } => {
+            format!("offers {} for {}", bundle_text(give), bundle_text(want))
+        }
+        Action::RespondTrade { accept } => {
+            if *accept {
+                "accepts the trade".to_string()
+            } else {
+                "declines the trade".to_string()
+            }
+        }
+        Action::CancelTrade => "ends the trade offer".to_string(),
+        Action::EndTurn => "ends the turn".to_string(),
+    }
+}
+
+/// Read-only player strip for the replay: VP + public tallies only, with no
+/// live turn timer or bot hints (there is no live turn to show).
+fn replay_players_frag(game: &GameState, _data: &RoomData, viewer: Option<PlayerId>) -> Markup {
+    let n = game.players.len();
+    let order: Vec<PlayerId> = match viewer {
+        Some(v) => (0..n).map(|i| (v + i) % n).collect(),
+        None => (0..n).collect(),
+    };
+    html! {
+        div.rp-grid {
+            @for pid in order {
+                @let p = &game.players[pid];
+                @let is_light = matches!(p.color, Color::White);
+                @let shown_vp = if game.is_over() {
+                    game.total_victory_points(pid)
+                } else {
+                    game.public_victory_points(pid)
+                };
+                div.rp-card.light[is_light] style=(format!("--pc:{}", color_hex(p.color))) {
+                    div.rp-name {
+                        span.pdot style=(format!("background:{}", color_hex(p.color))) {}
+                        (p.name)
+                    }
+                    div.rp-stats {
+                        span.rp-stat title="Victory points" { (ic("trophy")) (shown_vp) }
+                        span.rp-stat title="Resource cards" { (res_glyph(Resource::Wood)) (p.resources.total()) }
+                        span.rp-stat title="Development cards" { (ic("dev")) (p.all_dev_cards().count()) }
+                        span.rp-stat title="Knights played" { (ic("shield")) (p.played_knights) }
+                        @if game.longest_road == Some(pid) { span.rp-stat title="Longest Road" { (ic("road")) } }
+                        @if game.largest_army == Some(pid) { span.rp-stat title="Largest Army" { (ic("army")) } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Full-page, read-only move-history viewer for a finished game. `game` is the
+/// board state reconstructed up to move `n`; `total` is the recorded move count.
+pub fn replay_page(
+    code: &str,
+    data: &RoomData,
+    game: &GameState,
+    n: usize,
+    total: usize,
+    viewer: Option<PlayerId>,
+) -> Markup {
+    let moves: &[Move] = data
+        .game
+        .as_ref()
+        .map(|g| g.moves.as_slice())
+        .unwrap_or(&[]);
+    let step = |i: usize| format!("/room/{code}/replay?n={i}");
+    let prev = n.saturating_sub(1);
+    let next = (n + 1).min(total);
+    let at_start = n == 0;
+    let at_end = n >= total;
+    let current = if n == 0 {
+        "Starting position".to_string()
+    } else {
+        moves
+            .get(n - 1)
+            .map(|m| format!("{} {}", game.players[m.actor].name, action_summary(&m.action)))
+            .unwrap_or_default()
+    };
+    let actor_name = |idx: usize| game.players.get(idx).map(|p| p.name.clone()).unwrap_or_default();
+
+    shell("Game replay", html! {
+        div.wrap.page.replay {
+            div.replay-bar {
+                a.btn.sec href=(format!("/room/{code}")) { "Back to game" }
+                h1 { "Game replay" }
+                span.muted.replay-pos { "Move " (n) " / " (total) }
+            }
+            div.replay-main {
+                div.replay-board { (replay_board_frag(game, data, viewer)) }
+                div.card.replay-side {
+                    div.replay-now { (current) }
+                    div.replay-nav {
+                        @if at_start {
+                            span.btn.sec.disabled { "◀ Prev" }
+                        } @else {
+                            a.btn.sec href=(step(prev)) data-replay-prev { "◀ Prev" }
+                        }
+                        @if at_end {
+                            span.btn.sec.disabled { "Next ▶" }
+                        } @else {
+                            a.btn.sec href=(step(next)) data-replay-next { "Next ▶" }
+                        }
+                    }
+                    (replay_players_frag(game, data, viewer))
+                    ol.replay-list {
+                        @for (i, m) in moves.iter().enumerate() {
+                            @let mark = i + 1;
+                            @let label = format!("{} {}", actor_name(m.actor), action_summary(&m.action));
+                            li.replay-item.on[mark == n] {
+                                a href=(step(mark)) data-replay-step=(mark) {
+                                    span.replay-num { (mark) " " }
+                                    span.replay-text { (label) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            script { (maud::PreEscaped(REPLAY_JS)) }
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Board SVG
 // ---------------------------------------------------------------------------
 
 fn board_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
-    let board = &game.board;
-    let (minx, miny, w, h) = bounds(board);
     let mut highlights: Vec<Overlay> = Vec::new();
 
     if let Some(v) = viewer {
@@ -1615,6 +1846,23 @@ fn board_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Ma
         }
     }
 
+    board_svg(game, data, viewer, &highlights)
+}
+
+/// Read-only board for the end-of-game replay: the viewer's chosen layout, but
+/// never any legal-move highlights and no action targets.
+pub fn replay_board_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
+    board_svg(game, data, viewer, &[])
+}
+
+fn board_svg(
+    game: &GameState,
+    data: &RoomData,
+    viewer: Option<PlayerId>,
+    highlights: &[Overlay],
+) -> Markup {
+    let board = &game.board;
+    let (minx, miny, w, h) = bounds(board);
     let action_url = format!("/room/{}/action", data.code);
     let layout = viewer
         .and_then(|v| data.members.get(v))
@@ -1737,7 +1985,7 @@ fn board_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Ma
             }
 
             // Interaction overlays
-            @for ov in &highlights {
+            @for ov in highlights {
                 @match ov {
                     Overlay::Vertex(vi) => {
                         @let v = &board.vertices[*vi];

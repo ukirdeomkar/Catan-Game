@@ -1,8 +1,8 @@
 use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
-use crate::game::state::{BotLevel, MAX_PLAYERS};
+use crate::game::state::{BotLevel, GameState, MAX_PLAYERS};
 use crate::render;
-use crate::state::{AppState, JoinError, Layout, Room, ViewMode, now_ms};
+use crate::state::{AppState, JoinError, Layout, Room, SeatOutcome, ViewMode, now_ms};
 use axum::{
     extract::{Form, Path, Query, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
@@ -34,7 +34,10 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/start", post(start))
         .route("/room/{code}/pause", post(pause))
         .route("/room/{code}/resume", post(resume))
+        .route("/room/{code}/replay", get(replay))
         .route("/room/{code}/add_bot", post(add_bot))
+        .route("/room/{code}/remove", post(remove_player))
+        .route("/room/{code}/leave", post(leave_player))
         .route("/healthz", get(|| async { "ok" }))
         .route("/robots.txt", get(robots))
         // Served from the root so the worker's scope covers the whole origin.
@@ -190,6 +193,14 @@ fn set_cookie_header(code: &str, token: &str) -> (header::HeaderName, String) {
             "{}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000",
             cookie_name(code)
         ),
+    )
+}
+
+/// Drop the room's cookie so a tab that is still open stops presenting it.
+fn clear_cookie_header(code: &str) -> (header::HeaderName, String) {
+    (
+        header::SET_COOKIE,
+        format!("{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", cookie_name(code)),
     )
 }
 
@@ -394,7 +405,10 @@ fn render_events(app: &AppState, code: &str, token: &str) -> Vec<Result<Event, I
     };
     let mut data = room.data.lock().unwrap();
     let Some(v) = data.member_index(token) else {
-        return Vec::new();
+        // Our session stopped working — we left, or the host removed us. Tell
+        // this browser to go home; the next real page load lands there anyway
+        // because the token no longer maps to a seat.
+        return vec![Ok(Event::default().event("gone").data("/"))];
     };
     data.members[v].last_seen_ms = now_ms();
     let mk = |name: &str, m: maud::Markup| {
@@ -511,16 +525,9 @@ async fn action(
             if let Some((id, deadline)) = pending_expiry {
                 spawn_trade_expiry(room.clone(), app.clone(), id, deadline);
             }
-            // Empty body so htmx clears any stale error toast. The retarget
-            // header keeps the swap pointed at #toasts even though the action
-            // was triggered from a board/controls element inside the SSE-swapped
-            // fragments (which no longer inherit a target from #app).
-            (
-                StatusCode::OK,
-                [(header::HeaderName::from_static("hx-retarget"), "#toasts")],
-                Html(String::new()),
-            )
-                .into_response()
+            // The board/controls themselves arrive over SSE; this response
+            // only clears a stale error toast out of band.
+            cleared()
         }
         Err(msg) => toast(&msg),
     }
@@ -538,13 +545,7 @@ fn spawn_trade_expiry(room: Arc<Room>, app: Arc<AppState>, id: u64, deadline_ms:
         let changed = {
             let mut data = room.data.lock().unwrap();
             if let Some(game) = data.game.as_mut() {
-                if game.trade.as_ref().map(|t| t.id) == Some(id) {
-                    game.trade = None;
-                    game.push_log(None, "The trade offer expired.".to_string());
-                    true
-                } else {
-                    false
-                }
+                game.expire_trade(id)
             } else {
                 false
             }
@@ -777,6 +778,55 @@ async fn resume(
     }
 }
 
+/// Query for `/room/{code}/replay`: the move index to show. Omitted or past the
+/// end means "show the final position".
+#[derive(serde::Deserialize)]
+struct ReplayQuery {
+    #[serde(default)]
+    n: Option<usize>,
+}
+
+/// End-of-game move-history viewer (GitHub #13). Reconstructs a read-only,
+/// spectator board by replaying the recorded moves up to `n`. Only available
+/// once the game is over: at that point a full reveal is already acceptable, so
+/// no hidden hand is leaked while a game is still live.
+async fn replay(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<ReplayQuery>,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return Html(render::error_page("That room code does not exist.").into_string())
+            .into_response();
+    };
+    let token = cookie_value(&headers, &cookie_name(&code));
+    let data = room.data.lock().unwrap();
+    let Some(v) = token.as_deref().and_then(|t| data.member_index(t)) else {
+        return Html(render::error_page("You are not a member of this game.").into_string())
+            .into_response();
+    };
+    let Some(game) = data.game.as_ref() else {
+        return Html(render::error_page("The game has not started yet.").into_string())
+            .into_response();
+    };
+    if !game.is_over() {
+        return Html(
+            render::error_page("The replay is available once the game is over.").into_string(),
+        )
+        .into_response();
+    }
+    let Some(base) = data.initial_game.as_ref() else {
+        return Html(render::error_page("This game has no replay data.").into_string())
+            .into_response();
+    };
+    let total = game.moves.len();
+    let n = q.n.unwrap_or(total).min(total);
+    let view = GameState::replay_to(base, &game.moves, n);
+    Html(render::replay_page(&code, &data, &view, n, total, Some(v)).into_string()).into_response()
+}
+
 async fn add_bot(
     State(app): State<Arc<AppState>>,
     Path(code): Path<String>,
@@ -849,12 +899,133 @@ fn form_error(headers: &HeaderMap, status: StatusCode, msg: &str) -> Response {
     (status, Html(render::error_page(msg).into_string())).into_response()
 }
 
-fn toast(msg: &str) -> Response {
-    let body = maud::html! { (msg) }.into_string();
+/// Host-only: drop another seat. In the lobby the slot is freed; once the game
+/// is running it ends for everyone in the room.
+async fn remove_player(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return toast("Room not found.");
+    };
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return toast("Your session expired. Reload the page.");
+    };
+    let Some(target) = form.get("player").and_then(|p| p.parse::<usize>().ok()) else {
+        return toast("Which player? Reload the page.");
+    };
+    let outcome = {
+        let mut data = room.data.lock().unwrap();
+        data.remove_player(&token, target)
+    };
+    // An empty 200 clears the toast area; the bumped room pushes the new lobby
+    // fragment / game-over state over SSE, so no reload is needed.
+    match outcome {
+        Ok(_) => {
+            room.bump();
+            app.persist(&room);
+            cleared()
+        }
+        Err(msg) => toast(&msg),
+    }
+}
+
+/// A player leaves the room. In the lobby the slot is freed (and the host is
+/// handed on, or the room closes if nobody is left); mid-game the game ends for
+/// everyone, the host included.
+async fn leave_player(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return toast("Room not found.");
+    };
+    let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
+        return toast("Your session expired. Reload the page.");
+    };
+    let outcome = {
+        let mut data = room.data.lock().unwrap();
+        data.leave(&token)
+    };
+    match outcome {
+        Ok(SeatOutcome::Closed { .. }) => {
+            // Only bots are left, so drop the room. If a human joined in the
+            // meantime the registry re-check keeps it alive with a new host.
+            app.close_room_if_empty(&code);
+        }
+        Ok(_) => {
+            room.bump();
+            app.persist(&room);
+        }
+        Err(msg) => return toast(&msg),
+    }
+    // Send them out of the room, and expire the room's cookie so a stray
+    // reload lands on the home page instead of a dead seat. The `gone` SSE
+    // event is the second half of that navigation for a tab that is still
+    // open.
+    let (h, v) = clear_cookie_header(&code);
     (
         StatusCode::OK,
-        [(header::HeaderName::from_static("hx-retarget"), "#toasts")],
-        Html(body),
+        [
+            (h, v),
+            (header::HeaderName::from_static("hx-redirect"), "/".to_string()),
+        ],
+        Html(String::new()),
+    )
+        .into_response()
+}
+
+/// Clear any stale error toast after a successful action.
+///
+/// This must not depend on the triggering element. The SSE swap can replace
+/// the board or lobby fragment (and therefore the clicked button/spot) before
+/// the POST response lands, so an out-of-band `#toasts` swap would be resolved
+/// against a detached root and silently dropped. htmx dispatches
+/// `HX-Trigger-After-Swap` on `document.body` when the trigger is no longer
+/// attached, and `ui.js` empties `#toasts` on that event.
+fn cleared() -> Response {
+    (
+        StatusCode::OK,
+        [
+            (header::HeaderName::from_static("hx-reswap"), "none"),
+            (
+                header::HeaderName::from_static("hx-trigger-after-swap"),
+                "catan:clear-toasts",
+            ),
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        ],
+        String::new(),
+    )
+        .into_response()
+}
+
+fn toast(msg: &str) -> Response {
+    let body = maud::html! { div #toasts.toasts hx-swap-oob="true" { (msg) } }.into_string();
+    oob_only(body)
+}
+
+/// Return a body that only performs out-of-band swaps.
+///
+/// `HX-Retarget` is resolved relative to the *triggering* element's root. A
+/// button inside a board, controls, or lobby fragment can be detached by the
+/// SSE swap before the POST response lands; the retarget then resolves to
+/// `null` and htmx throws while adding its swapping class. An out-of-band swap
+/// is looked up from the document instead, so it does not care whether the
+/// trigger is still attached. `HX-Reswap: none` keeps htmx from also swapping
+/// this fragment into the (possibly detached) trigger.
+fn oob_only(body: String) -> Response {
+    (
+        StatusCode::OK,
+        [
+            (header::HeaderName::from_static("hx-reswap"), "none"),
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        ],
+        body,
     )
         .into_response()
 }
@@ -873,6 +1044,50 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("catan-how-to-play-test-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         AppState::new(dir)
+    }
+
+    #[tokio::test]
+    async fn toast_swaps_out_of_band_instead_of_retargeting_the_trigger() {
+        let res = toast("Boom");
+        assert!(
+            res.headers().get("hx-retarget").is_none(),
+            "a trigger-relative retarget breaks once SSE replaces the trigger"
+        );
+        assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
+        let body = body_string(res).await;
+        assert!(body.contains(r#"id="toasts""#), "the toast must target #toasts: {body}");
+        assert!(body.contains(r#"hx-swap-oob="true""#), "the toast must be out of band: {body}");
+        assert!(body.contains("Boom"), "the toast must carry the message: {body}");
+    }
+
+    #[tokio::test]
+    async fn cleared_drives_the_toast_clear_from_an_event_not_a_target() {
+        let res = cleared();
+        assert!(res.headers().get("hx-retarget").is_none());
+        assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
+        assert_eq!(
+            res.headers().get("hx-trigger-after-swap").unwrap(),
+            "catan:clear-toasts",
+            "htmx dispatches this event on <body> when the trigger was detached"
+        );
+        assert!(
+            body_string(res).await.is_empty(),
+            "the clear must not rely on resolving a possibly detached target"
+        );
+    }
+
+    #[test]
+    fn lobby_has_a_stable_toast_container() {
+        let app = test_app("lobby-toast");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let data = room.data.lock().unwrap();
+        let page = render::lobby_page(&data.code, &data, &token).into_string();
+        drop(data);
+        assert!(
+            page.contains(r#"id="toasts""#),
+            "lobby errors need a persistent #toasts target"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
     async fn guide(app: &Arc<AppState>, room: &str) -> String {
@@ -999,10 +1214,17 @@ mod tests {
         .await;
 
         assert_eq!(res.status(), StatusCode::OK);
-        assert_eq!(
-            res.headers().get("hx-retarget").unwrap(),
-            "#toasts",
-            "HTMX failures must surface in the toast area"
+        assert!(
+            res.headers().get("hx-retarget").is_none(),
+            "a trigger-relative retarget breaks once SSE replaces the trigger"
+        );
+        assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
+        let body = body_string(res).await;
+        assert!(body.contains(r#"id="toasts""#), "the toast must target #toasts: {body}");
+        assert!(body.contains(r#"hx-swap-oob="true""#), "the toast must be out of band: {body}");
+        assert!(
+            body.contains("already started"),
+            "the toast must explain why the bot was not added: {body}"
         );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
@@ -1105,6 +1327,142 @@ mod tests {
         assert!(
             body.contains(&format!("href=\"/room/{code}\"")),
             "the lookup must normalise case before matching a live room"
+        );
+    }
+
+    // --- replay gate (issue #13) -----------------------------------------
+
+    fn auth_headers(code: &str, token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        let cookie = format!("{}={token}", cookie_name(code));
+        h.insert(header::COOKIE, cookie.parse().unwrap());
+        h
+    }
+
+    async fn body_string(res: Response) -> String {
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// Create a started room with one bot seat and return (app, room, code, host token).
+    fn started_room(tag: &str) -> (Arc<AppState>, Arc<Room>, String, String) {
+        let app = test_app(tag);
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        app.start_game(&room, &token).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        (app, room, code, token)
+    }
+
+    #[tokio::test]
+    async fn replay_is_refused_while_the_game_is_live() {
+        let (app, _room, code, token) = started_room("replay-live");
+        let res = replay(
+            State(app.clone()),
+            Path(code.clone()),
+            auth_headers(&code, &token),
+            Query(ReplayQuery { n: None }),
+        )
+        .await;
+        let body = body_string(res).await;
+        assert!(
+            body.contains("once the game is over"),
+            "a live game must not expose a replay"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn replay_page_renders_a_reconstructed_board() {
+        let (app, room, code, token) = started_room("replay-done");
+        {
+            let mut data = room.data.lock().unwrap();
+            let g = data.game.as_mut().unwrap();
+            let pid = g.current;
+            let v = g.legal_settlement_vertices(pid)[0];
+            g.apply(pid, &Action::PlaceSettlement { vertex: v }).unwrap();
+            // Force the game over so the replay is permitted; the handler does
+            // not require the recorded moves to have produced the winner.
+            g.phase = crate::game::state::Phase::GameOver;
+            g.winner = Some(pid);
+        }
+        let res = replay(
+            State(app.clone()),
+            Path(code.clone()),
+            auth_headers(&code, &token),
+            Query(ReplayQuery { n: Some(1) }),
+        )
+        .await;
+        let body = body_string(res).await;
+        assert!(body.contains("Game replay"), "the replay page must render");
+        assert!(body.contains("<svg"), "the board must render as SVG");
+        assert!(
+            body.contains("places a settlement"),
+            "the move list must describe the recorded move"
+        );
+        assert!(
+            body.contains("Move 1 / 1"),
+            "the position counter must reflect the requested move index"
+        );
+        assert!(
+            body.contains(&format!("href=\"/room/{code}/replay?n=1\"")),
+            "the move list must link to the reconstructed position"
+        );
+        assert!(
+            body.contains("replay-item on"),
+            "the currently-shown move must be highlighted"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    /// Test helper for manual/browser QA of the replay: writes a finished game
+    /// to `CATAN_SEED_DIR` (default a temp dir) and prints its room code. Point
+    /// the server at that dir, then join the printed code with the name `Al` to
+    /// land in the finished room and open its Replay. Ignored by default.
+    #[test]
+    #[ignore = "test helper: seeds a finished replay room for browser QA"]
+    fn seed_finished_room_for_qa() {
+        let dir = std::env::var("CATAN_SEED_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("catan-replay-qa"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let app = AppState::new(dir.clone());
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        app.start_game(&room, &token).unwrap();
+        {
+            let mut data = room.data.lock().unwrap();
+            let g = data.game.as_mut().unwrap();
+            let mut guard = 0;
+            while matches!(g.phase, crate::game::state::Phase::Setup) {
+                guard += 1;
+                assert!(guard < 50, "setup failed to finish");
+                let pid = g.current;
+                if let Some(v) = g.setup_road_from {
+                    let e = g.board.vertices[v]
+                        .edges
+                        .iter()
+                        .copied()
+                        .find(|&e| g.board.edges[e].owner.is_none())
+                        .unwrap();
+                    g.apply(pid, &Action::PlaceRoad { edge: e }).unwrap();
+                } else {
+                    let v = (0..g.board.vertices.len())
+                        .find(|&v| g.legal_settlement_vertices(pid).contains(&v))
+                        .unwrap();
+                    g.apply(pid, &Action::PlaceSettlement { vertex: v }).unwrap();
+                }
+            }
+            g.phase = crate::game::state::Phase::GameOver;
+            g.winner = Some(0);
+        }
+        app.persist(&room);
+        println!(
+            "SEEDED room {} in {}",
+            room.data.lock().unwrap().code,
+            dir.display()
         );
     }
 }

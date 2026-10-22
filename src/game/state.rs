@@ -1,3 +1,4 @@
+use crate::game::actions::Action;
 use crate::game::board::{Board, Building};
 use crate::game::resources::{
     ALL_RESOURCES, Bundle, DevCard, Resource, ResourceHand, standard_dev_deck,
@@ -149,6 +150,17 @@ pub struct LogEntry {
     pub text: String,
 }
 
+/// One recorded move: the actor plus the action that was applied. Timed
+/// (non-player) transitions such as a timer-forced end-turn or a trade expiry
+/// set `forced`, so replay reapplies them without rule validation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Move {
+    pub actor: PlayerId,
+    pub action: Action,
+    #[serde(default)]
+    pub forced: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum TradeResponse {
     Pending,
@@ -192,6 +204,10 @@ pub struct GameState {
     pub largest_army: Option<PlayerId>,
     pub winner: Option<PlayerId>,
     pub log: Vec<LogEntry>,
+    /// Ordered record of every applied move, kept so the finished game can be
+    /// stepped through in the end-of-game replay. Empty on a base snapshot.
+    #[serde(default)]
+    pub moves: Vec<Move>,
     pub pending_discards: Vec<PlayerId>,
     pub trade: Option<TradeOffer>,
     /// Monotonic id source for trade offers.
@@ -247,6 +263,7 @@ impl GameState {
             largest_army: None,
             winner: None,
             log: Vec::new(),
+            moves: Vec::new(),
             pending_discards: Vec::new(),
             trade: None,
             trade_seq: 0,
@@ -279,6 +296,7 @@ impl GameState {
         self.current = self.setup_queue[0];
         self.phase = Phase::Setup;
         self.log.clear();
+        self.moves.clear();
         self.push_log(None, "The game begins. Place settlements and roads in snake order.");
     }
 
@@ -302,6 +320,24 @@ impl GameState {
 
     pub fn is_over(&self) -> bool {
         matches!(self.phase, Phase::GameOver)
+    }
+
+    /// End the game with no winner — used when the room is abandoned mid-game
+    /// (a player leaves, or the host removes them). The board stays as it is
+    /// so everyone sees the final position; `winner` stays `None` so nobody is
+    /// credited with a victory.
+    pub fn abandon(&mut self, reason: impl Into<String>) {
+        if self.is_over() {
+            return;
+        }
+        self.phase = Phase::GameOver;
+        self.winner = None;
+        self.trade = None;
+        self.pending_discards.clear();
+        self.free_roads_left = 0;
+        self.year_of_plenty_left = 0;
+        self.steal_hex = None;
+        self.push_log(None, reason);
     }
 
     pub fn robber_terrain(&self) -> crate::game::board::Terrain {

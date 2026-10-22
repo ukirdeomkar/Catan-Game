@@ -3,7 +3,7 @@ use crate::game::board::{Board, Building, Terrain};
 use crate::game::resources::{Bundle, DevCard, Resource, ResourceHand};
 use crate::game::rng::Rng64;
 use crate::game::scoring::longest_road_length;
-use crate::game::state::{Color, GameState, Phase, PlayerConfig, TradeResponse};
+use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerConfig, TradeResponse};
 
 fn configs(n: usize) -> Vec<PlayerConfig> {
     (0..n)
@@ -899,4 +899,176 @@ fn playing_the_largest_army_knight_completes_a_hidden_card_win() {
         "the win must be detected the moment Largest Army completes it"
     );
     assert!(s.is_over());
+}
+
+// ---------------------------------------------------------------------------
+// End-of-game replay (issue #13)
+// ---------------------------------------------------------------------------
+
+/// The next seat that must act in an all-bot game (mirrors the bot driver).
+fn next_actor(game: &GameState) -> Option<usize> {
+    match &game.phase {
+        Phase::Lobby | Phase::GameOver => None,
+        Phase::Setup => game.setup_queue.get(game.setup_pos).copied(),
+        Phase::Play => {
+            if let Some(t) = &game.trade {
+                if let Some((p, _)) = t
+                    .responses
+                    .iter()
+                    .find(|(_, r)| *r == TradeResponse::Pending)
+                {
+                    return Some(*p);
+                }
+            }
+            Some(game.current)
+        }
+        Phase::Discard => game.pending_discards.first().copied(),
+        Phase::MoveRobber { .. } | Phase::Steal { .. } => Some(game.current),
+    }
+}
+
+/// Play a deterministic all-bot game to completion and return the final state
+/// together with the post-`start()` baseline used for replay.
+fn play_out_with_base(seed: u64) -> (GameState, GameState) {
+    let mut game = GameState::new_lobby(configs(4), seed);
+    game.start();
+    let base = game.clone();
+    let mut steps = 0;
+    while !game.is_over() {
+        steps += 1;
+        assert!(steps < 40_000, "seed {seed} failed to finish");
+        let Some(pid) = next_actor(&game) else { break };
+        let action = crate::bot::choose_action(&game, pid, BotLevel::Medium);
+        game.apply(pid, &action)
+            .unwrap_or_else(|e| panic!("illegal {action:?} by {pid}: {e}"));
+    }
+    (base, game)
+}
+
+#[test]
+fn replay_reproduces_the_final_state_exactly() {
+    for seed in [1u64, 7, 42, 99, 1234] {
+        let (base, live) = play_out_with_base(seed);
+        assert!(live.is_over(), "seed {seed} did not end");
+        let total = live.moves.len();
+        assert!(total > 0, "seed {seed} recorded no moves");
+
+        let full = GameState::replay_to(&base, &live.moves, total);
+        assert_eq!(
+            serde_json::to_value(&full).unwrap(),
+            serde_json::to_value(&live).unwrap(),
+            "seed {seed}: replaying every move must rebuild the live state"
+        );
+    }
+}
+
+#[test]
+fn replay_prefix_matches_its_move_count() {
+    let (base, live) = play_out_with_base(42);
+    let total = live.moves.len();
+    let mid = total / 2;
+
+    let part = GameState::replay_to(&base, &live.moves, mid);
+    assert_eq!(part.moves.len(), mid, "a prefix replay records its own prefix");
+
+    // Replaying the reconstructed prefix again is idempotent.
+    let again = GameState::replay_to(&base, &part.moves, part.moves.len());
+    assert_eq!(
+        serde_json::to_value(&again).unwrap(),
+        serde_json::to_value(&part).unwrap(),
+        "replaying a reconstructed game must be stable"
+    );
+
+    // The prefix must differ from the final position (the game actually moved).
+    assert_ne!(
+        serde_json::to_value(&part).unwrap(),
+        serde_json::to_value(&live).unwrap(),
+        "a mid-game position must not equal the final one"
+    );
+}
+
+#[test]
+fn snapshot_round_trips_through_json() {
+    let mut game = fresh(3, 11);
+    auto_setup(&mut game);
+    let bytes = serde_json::to_vec(&game).unwrap();
+    let back: GameState = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        serde_json::to_value(&back).unwrap(),
+        serde_json::to_value(&game).unwrap(),
+        "a game snapshot must survive a JSON round trip"
+    );
+    assert!(!back.moves.is_empty(), "recorded moves must persist");
+}
+
+#[test]
+fn replay_covers_forced_moves() {
+    // Timers and trade expiry mutate state without a player `apply`; the replay
+    // must reproduce those transitions too, including their log lines.
+    let mut game = fresh(2, 202);
+    auto_setup(&mut game);
+    game.players[0].resources.add(Resource::Wood, 1);
+    game.players[1].resources.add(Resource::Ore, 1);
+    let base = game.clone();
+
+    game.apply(
+        0,
+        &Action::ProposeTrade {
+            give: Bundle::default().with(Resource::Wood, 1),
+            want: Bundle::default().with(Resource::Ore, 1),
+        },
+    )
+    .unwrap();
+    let offer_id = game.trade.as_ref().unwrap().id;
+    assert!(game.expire_trade(offer_id), "the open offer must expire");
+    game.force_end_turn();
+
+    let full = GameState::replay_to(&base, &game.moves, game.moves.len());
+    assert_eq!(
+        serde_json::to_value(&full).unwrap(),
+        serde_json::to_value(&game).unwrap(),
+        "forced moves must replay exactly, log lines included"
+    );
+}
+
+#[test]
+fn legacy_snapshot_without_moves_still_loads() {
+    // A game saved before the replay feature has no `moves` key; it must load
+    // with an empty move log instead of failing to deserialize.
+    let game = fresh(2, 3);
+    let mut value = serde_json::to_value(&game).unwrap();
+    value.as_object_mut().unwrap().remove("moves");
+    let back: GameState = serde_json::from_value(value).unwrap();
+    assert!(back.moves.is_empty(), "missing moves must default to empty");
+}
+
+// ---------------------------------------------------------------------------
+// Remove / leave mid-game (issue #64)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn abandon_ends_the_game_without_a_winner() {
+    let mut s = fresh(3, 77);
+    auto_setup(&mut s);
+    s.apply(0, &Action::RollDice).unwrap();
+    s.abandon("Bob left the game.");
+    assert!(s.is_over());
+    assert_eq!(s.phase, Phase::GameOver);
+    assert_eq!(s.winner, None, "an abandoned game has no winner");
+    assert!(
+        s.log.iter().any(|l| l.text.contains("Bob left the game.")),
+        "the reason must reach the shared log"
+    );
+    // Nothing may keep acting: a trade in flight is dropped, and no player is
+    // stuck waiting for a discard/steal that can never happen.
+    assert!(s.trade.is_none());
+    assert!(s.pending_discards.is_empty());
+}
+
+#[test]
+fn abandon_is_idempotent() {
+    let mut s = fresh(2, 78);
+    s.abandon("first reason");
+    s.abandon("second reason");
+    assert_eq!(s.winner, None);
 }
