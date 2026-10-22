@@ -15,9 +15,11 @@
   main { width:100%; max-width:1000px; padding:18px; text-align:center; }
   video { width:100%; height:auto; border-radius:12px; background:#000;
           box-shadow:0 10px 34px rgba(0,0,0,.45); }
-  a.play { margin-top:20px; display:inline-block; background:#2f7d4f; color:#fff;
+  a.play, a.store { margin-top:20px; display:inline-block; background:#2f7d4f; color:#fff;
            text-decoration:none; padding:11px 20px; border-radius:9px; font-weight:600; }
-  a.play:hover { background:#369159; }
+  a.play:hover, a.store:hover { background:#369159; }
+  a.store { margin-left:10px; background:#1b3a2a; }
+  a.store:hover { background:#245038; }
 </style>
 </head>
 <body>
@@ -30,7 +32,10 @@
     <source src="demo.mp4" type="video/mp4">
     Your browser can’t play this video. <a href="demo.mp4">Download it</a>.
   </video>
-  <div><a class="play" href="https://playcatanou.duckdns.org">Play Catanou →</a></div>
+  <div>
+    <a class="play" href="https://playcatanou.duckdns.org">Play Catanou →</a>
+    <a class="store" href="https://play.google.com/store/apps/details?id=org.playcatanou.twa">Get it on Google Play</a>
+  </div>
 </main>
 </body>
 </html>
