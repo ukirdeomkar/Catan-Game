@@ -1,6 +1,6 @@
 use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
-use crate::game::state::BotLevel;
+use crate::game::state::{BotLevel, GameState};
 use crate::render;
 use crate::state::{AppState, JoinError, Layout, Room, ViewMode, now_ms};
 use axum::{
@@ -33,6 +33,7 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/start", post(start))
         .route("/room/{code}/pause", post(pause))
         .route("/room/{code}/resume", post(resume))
+        .route("/room/{code}/replay", get(replay))
         .route("/room/{code}/add_bot", post(add_bot))
         .route("/room/{code}/remove", post(remove_player))
         .route("/room/{code}/leave", post(leave_player))
@@ -495,13 +496,7 @@ fn spawn_trade_expiry(room: Arc<Room>, app: Arc<AppState>, id: u64, deadline_ms:
         let changed = {
             let mut data = room.data.lock().unwrap();
             if let Some(game) = data.game.as_mut() {
-                if game.trade.as_ref().map(|t| t.id) == Some(id) {
-                    game.trade = None;
-                    game.push_log(None, "The trade offer expired.".to_string());
-                    true
-                } else {
-                    false
-                }
+                game.expire_trade(id)
             } else {
                 false
             }
@@ -727,6 +722,55 @@ async fn resume(
     }
 }
 
+/// Query for `/room/{code}/replay`: the move index to show. Omitted or past the
+/// end means "show the final position".
+#[derive(serde::Deserialize)]
+struct ReplayQuery {
+    #[serde(default)]
+    n: Option<usize>,
+}
+
+/// End-of-game move-history viewer (GitHub #13). Reconstructs a read-only,
+/// spectator board by replaying the recorded moves up to `n`. Only available
+/// once the game is over: at that point a full reveal is already acceptable, so
+/// no hidden hand is leaked while a game is still live.
+async fn replay(
+    State(app): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<ReplayQuery>,
+) -> Response {
+    let code = code.to_uppercase();
+    let Some(room) = app.room(&code) else {
+        return Html(render::error_page("That room code does not exist.").into_string())
+            .into_response();
+    };
+    let token = cookie_value(&headers, &cookie_name(&code));
+    let data = room.data.lock().unwrap();
+    let Some(v) = token.as_deref().and_then(|t| data.member_index(t)) else {
+        return Html(render::error_page("You are not a member of this game.").into_string())
+            .into_response();
+    };
+    let Some(game) = data.game.as_ref() else {
+        return Html(render::error_page("The game has not started yet.").into_string())
+            .into_response();
+    };
+    if !game.is_over() {
+        return Html(
+            render::error_page("The replay is available once the game is over.").into_string(),
+        )
+        .into_response();
+    }
+    let Some(base) = data.initial_game.as_ref() else {
+        return Html(render::error_page("This game has no replay data.").into_string())
+            .into_response();
+    };
+    let total = game.moves.len();
+    let n = q.n.unwrap_or(total).min(total);
+    let view = GameState::replay_to(base, &game.moves, n);
+    Html(render::replay_page(&code, &data, &view, n, total, Some(v)).into_string()).into_response()
+}
+
 async fn add_bot(
     State(app): State<Arc<AppState>>,
     Path(code): Path<String>,
@@ -919,6 +963,142 @@ mod tests {
         assert!(
             body.contains(&format!("href=\"/room/{code}\"")),
             "the lookup must normalise case before matching a live room"
+        );
+    }
+
+    // --- replay gate (issue #13) -----------------------------------------
+
+    fn auth_headers(code: &str, token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        let cookie = format!("{}={token}", cookie_name(code));
+        h.insert(header::COOKIE, cookie.parse().unwrap());
+        h
+    }
+
+    async fn body_string(res: Response) -> String {
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// Create a started room with one bot seat and return (app, room, code, host token).
+    fn started_room(tag: &str) -> (Arc<AppState>, Arc<Room>, String, String) {
+        let app = test_app(tag);
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        app.start_game(&room, &token).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        (app, room, code, token)
+    }
+
+    #[tokio::test]
+    async fn replay_is_refused_while_the_game_is_live() {
+        let (app, _room, code, token) = started_room("replay-live");
+        let res = replay(
+            State(app.clone()),
+            Path(code.clone()),
+            auth_headers(&code, &token),
+            Query(ReplayQuery { n: None }),
+        )
+        .await;
+        let body = body_string(res).await;
+        assert!(
+            body.contains("once the game is over"),
+            "a live game must not expose a replay"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn replay_page_renders_a_reconstructed_board() {
+        let (app, room, code, token) = started_room("replay-done");
+        {
+            let mut data = room.data.lock().unwrap();
+            let g = data.game.as_mut().unwrap();
+            let pid = g.current;
+            let v = g.legal_settlement_vertices(pid)[0];
+            g.apply(pid, &Action::PlaceSettlement { vertex: v }).unwrap();
+            // Force the game over so the replay is permitted; the handler does
+            // not require the recorded moves to have produced the winner.
+            g.phase = crate::game::state::Phase::GameOver;
+            g.winner = Some(pid);
+        }
+        let res = replay(
+            State(app.clone()),
+            Path(code.clone()),
+            auth_headers(&code, &token),
+            Query(ReplayQuery { n: Some(1) }),
+        )
+        .await;
+        let body = body_string(res).await;
+        assert!(body.contains("Game replay"), "the replay page must render");
+        assert!(body.contains("<svg"), "the board must render as SVG");
+        assert!(
+            body.contains("places a settlement"),
+            "the move list must describe the recorded move"
+        );
+        assert!(
+            body.contains("Move 1 / 1"),
+            "the position counter must reflect the requested move index"
+        );
+        assert!(
+            body.contains(&format!("href=\"/room/{code}/replay?n=1\"")),
+            "the move list must link to the reconstructed position"
+        );
+        assert!(
+            body.contains("replay-item on"),
+            "the currently-shown move must be highlighted"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    /// Test helper for manual/browser QA of the replay: writes a finished game
+    /// to `CATAN_SEED_DIR` (default a temp dir) and prints its room code. Point
+    /// the server at that dir, then join the printed code with the name `Al` to
+    /// land in the finished room and open its Replay. Ignored by default.
+    #[test]
+    #[ignore = "test helper: seeds a finished replay room for browser QA"]
+    fn seed_finished_room_for_qa() {
+        let dir = std::env::var("CATAN_SEED_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("catan-replay-qa"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let app = AppState::new(dir.clone());
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        app.start_game(&room, &token).unwrap();
+        {
+            let mut data = room.data.lock().unwrap();
+            let g = data.game.as_mut().unwrap();
+            let mut guard = 0;
+            while matches!(g.phase, crate::game::state::Phase::Setup) {
+                guard += 1;
+                assert!(guard < 50, "setup failed to finish");
+                let pid = g.current;
+                if let Some(v) = g.setup_road_from {
+                    let e = g.board.vertices[v]
+                        .edges
+                        .iter()
+                        .copied()
+                        .find(|&e| g.board.edges[e].owner.is_none())
+                        .unwrap();
+                    g.apply(pid, &Action::PlaceRoad { edge: e }).unwrap();
+                } else {
+                    let v = (0..g.board.vertices.len())
+                        .find(|&v| g.legal_settlement_vertices(pid).contains(&v))
+                        .unwrap();
+                    g.apply(pid, &Action::PlaceSettlement { vertex: v }).unwrap();
+                }
+            }
+            g.phase = crate::game::state::Phase::GameOver;
+            g.winner = Some(0);
+        }
+        app.persist(&room);
+        println!(
+            "SEEDED room {} in {}",
+            room.data.lock().unwrap().code,
+            dir.display()
         );
     }
 }

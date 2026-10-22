@@ -68,6 +68,11 @@ pub struct RoomData {
     pub host_token: String,
     pub members: Vec<Member>,
     pub game: Option<GameState>,
+    /// The post-`start()` board state, kept as the replay baseline. The live
+    /// `game` only holds the current state plus the move log; re-applying
+    /// `game.moves` onto this snapshot rebuilds any earlier position.
+    #[serde(default)]
+    pub initial_game: Option<GameState>,
     pub started: bool,
     pub created_ms: u64,
     pub last_activity_ms: u64,
@@ -347,6 +352,7 @@ impl AppState {
             left: false,
             }],
             game: None,
+            initial_game: None,
             started: false,
             created_ms: now_ms(),
             last_activity_ms: now_ms(),
@@ -454,6 +460,8 @@ impl AppState {
             let seed = self.rng.lock().unwrap().next_u64();
             let mut game = GameState::new_lobby(configs, seed);
             game.start();
+            // Keep the post-start board as the immutable replay baseline.
+            data.initial_game = Some(game.clone());
             data.game = Some(game);
             data.started = true;
             data.last_activity_ms = now_ms();
@@ -892,6 +900,7 @@ mod tests {
             host_token: "t".into(),
             members: vec![member(is_bot)],
             game: None,
+            initial_game: None,
             started: true,
             created_ms: 0,
             last_activity_ms: 0,
