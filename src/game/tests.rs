@@ -1042,3 +1042,33 @@ fn legacy_snapshot_without_moves_still_loads() {
     assert!(back.moves.is_empty(), "missing moves must default to empty");
 }
 
+// ---------------------------------------------------------------------------
+// Remove / leave mid-game (issue #64)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn abandon_ends_the_game_without_a_winner() {
+    let mut s = fresh(3, 77);
+    auto_setup(&mut s);
+    s.apply(0, &Action::RollDice).unwrap();
+    s.abandon("Bob left the game.");
+    assert!(s.is_over());
+    assert_eq!(s.phase, Phase::GameOver);
+    assert_eq!(s.winner, None, "an abandoned game has no winner");
+    assert!(
+        s.log.iter().any(|l| l.text.contains("Bob left the game.")),
+        "the reason must reach the shared log"
+    );
+    // Nothing may keep acting: a trade in flight is dropped, and no player is
+    // stuck waiting for a discard/steal that can never happen.
+    assert!(s.trade.is_none());
+    assert!(s.pending_discards.is_empty());
+}
+
+#[test]
+fn abandon_is_idempotent() {
+    let mut s = fresh(2, 78);
+    s.abandon("first reason");
+    s.abandon("second reason");
+    assert_eq!(s.winner, None);
+}

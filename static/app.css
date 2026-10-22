@@ -69,6 +69,8 @@ body:not(.game) #audio-toggle:hover{background:#ffffff33}
 .btn.sec{background:#37424e}
 .btn.warn{background:#c0392b}
 .btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.tiny{min-height:30px;padding:5px 9px;font-size:11px;border-radius:8px;gap:3px;display:inline-flex;align-items:center}
+.btn.tiny .ic{width:12px;height:12px}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 select,input[type=text],input[type=number]{background:#0f151b;color:#e9eef2;border:1px solid #35414c;border-radius:8px;padding:6px}
 .players{display:flex;gap:6px;margin-bottom:2px}
@@ -76,6 +78,8 @@ select,input[type=text],input[type=number]{background:#0f151b;color:#e9eef2;bord
 .pcard .pdot{width:11px;height:11px;border-radius:50%;border:1px solid #0006}
 .pcard .pname{font-size:12px;font-weight:800;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pcard .pbadges{font-size:10px;line-height:1}
+.pcard .pact{margin-top:5px}
+.pcard .pact .btn{width:100%}
 .dot{width:14px;height:14px;border-radius:50%;border:1px solid #0006;flex:0 0 auto}
 .badge{font-size:11px;background:#33414e;border-radius:6px;padding:2px 6px;margin-left:4px}
 header.site .wrap{display:flex;align-items:center;gap:10px;padding-top:12px;padding-bottom:2px}
@@ -154,6 +158,10 @@ body.game #audio-toggle.off{opacity:.5}
 .pstrip .prow .glyph{width:12px;height:12px}
 .pstrip .ptimer{align-self:flex-start;margin-top:1px;background:#0d5f96;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:800;color:#fff}
 .pstrip .ptimer.expiring{background:#c0392b}
+.pstrip .pact{align-self:flex-start;margin-top:3px}
+.pstrip .pcard.gone{opacity:.55}
+.pstrip .pcard.gone .pname{text-decoration:line-through}
+.pstrip .prow .stat.gone{background:#00000040;border-radius:6px;padding:1px 5px}
 .pstrip .bot-tag{font-size:9px;opacity:.8;font-weight:700}
 .pstrip .phint{display:flex;flex-direction:column;gap:2px;margin-top:3px;background:#00000040;border-radius:8px;padding:3px 5px;color:#fff}
 .pstrip .ph-row{display:flex;align-items:center;gap:3px;flex-wrap:wrap}
@@ -175,6 +183,7 @@ body.game #audio-toggle.off{opacity:.5}
 .ctl{position:fixed;left:50%;top:calc(120px + var(--titlebar-h,0px));transform:translateX(-50%);z-index:30;pointer-events:none;max-width:calc(100% - 24px)}
 .ctl .pill{pointer-events:auto;display:inline-flex;align-items:center;gap:6px;background:#0b4d7ccc;color:#fff;border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;box-shadow:0 4px 14px #0004;white-space:nowrap}
 .ctl .pill.win{background:#1f8a4ccc}
+.pill.over{background:#37424ecc}
 .ctl .pill .ic{width:15px;height:15px}
 
 /* Active trade offer card */
@@ -434,4 +443,4 @@ body:not(.game) .check input{width:18px;height:18px;accent-color:#2e7dd1}
 .replay-item a:hover{background:#ffffff14}
 .replay-item.on a{color:#ffeaa7;font-weight:900}
 .replay-num{color:#9fc0d8;font-weight:900;min-width:26px;text-align:right}
-.pill.win .replay-open{margin-left:10px;padding:4px 10px;min-height:28px;font-size:12px}
+.pill.win .replay-open,.pill.over .replay-open{margin-left:10px;padding:4px 10px;min-height:28px;font-size:12px}
