@@ -235,8 +235,24 @@ impl RoomData {
     }
 
     /// The host removes any other seat (`target` is the member index, which is
-    /// the player id once the game starts).
+    /// the player id once the game starts). This keeps the original behaviour:
+    /// mid-game the game ends for everyone.
     pub fn remove_player(&mut self, host_token: &str, target: usize) -> Result<SeatOutcome, String> {
+        self.remove_player_with(host_token, target, LeaveChoice::End)
+    }
+
+    /// The host removes another seat, choosing what happens mid-game:
+    /// `End` abandons the game, `Bot` hands the seat to a Medium bot and keeps
+    /// the game running. `Bot` mirrors the leave rule: a takeover is refused
+    /// when it would leave fewer than two humans (the host is staying, so the
+    /// kicked seat's game must still have somebody to play against), and it is
+    /// never offered for a seat that is already a bot.
+    pub fn remove_player_with(
+        &mut self,
+        host_token: &str,
+        target: usize,
+        choice: LeaveChoice,
+    ) -> Result<SeatOutcome, String> {
         if !self.is_host(host_token) {
             return Err("Only the host can remove players.".into());
         }
@@ -247,6 +263,24 @@ impl RoomData {
         let Some(member) = self.members.get(target) else {
             return Err("That player is not in this room.".into());
         };
+        if self.game.is_some() && choice == LeaveChoice::Bot {
+            if member.is_bot {
+                return Err("That seat is already a bot.".into());
+            }
+            let humans_after = self
+                .members
+                .iter()
+                .enumerate()
+                .filter(|(idx, m)| *idx != target && !m.is_bot)
+                .count();
+            if humans_after < 2 {
+                return Err(
+                    "Passing this seat to a bot would leave only one human. End the game instead."
+                        .into(),
+                );
+            }
+            return Ok(self.bot_takeover(target, "was removed by the host"));
+        }
         let name = member.name.clone();
         Ok(self.empty_seat(target, format!("{name} was removed by the host.")))
     }
@@ -268,13 +302,14 @@ impl RoomData {
     }
 
     /// Turn an occupied seat into a Medium bot without touching its game state.
-    /// The leaver's session token is rotated so the old cookie is dead; the game
-    /// keeps running and the bot starts taking turns normally.
-    fn bot_takeover(&mut self, idx: usize) -> SeatOutcome {
+    /// The seat's session token is rotated so the old cookie is dead; the game
+    /// keeps running and the bot starts taking turns normally. `why` completes
+    /// "<name> ___ — a bot takes over." (left / was removed by the host).
+    fn bot_takeover(&mut self, idx: usize, why: &str) -> SeatOutcome {
         let name = self.members[idx].name.clone();
         if let Some(game) = self.game.as_mut() {
             game.players[idx].is_bot = true;
-            game.push_log(None, format!("{name} left — a bot takes over."));
+            game.push_log(None, format!("{name} {why} — a bot takes over."));
         }
         let seat = &mut self.members[idx];
         seat.is_bot = true;
@@ -330,7 +365,7 @@ impl RoomData {
                     if was_host {
                         self.host_token = successor;
                     }
-                    Ok(self.bot_takeover(idx))
+                    Ok(self.bot_takeover(idx, "left"))
                 }
             };
         }
@@ -1164,6 +1199,19 @@ mod tests {
         (app, room, alice, bob, dir)
     }
 
+    /// Alice creates a room and Bob and Carol join it.
+    fn three_players(tag: &str) -> (Arc<AppState>, Arc<Room>, String, String, PathBuf) {
+        let (app, dir) = app(tag);
+        let (room, alice) = app.create_room("Alice".into(), 180, true).unwrap();
+        let code = room_code(&room);
+        let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        let (_, carol) = app.join(&code, "Carol".into()).unwrap();
+        // `carol` is only here to keep three humans; the callers pick seats by
+        // token/name so the unused binding is deliberate.
+        let _ = &carol;
+        (app, room, alice, bob, dir)
+    }
+
     #[test]
     fn host_remove_in_lobby_frees_the_slot() {
         let (app, room, alice, bob, dir) = two_players("remove-lobby");
@@ -1432,6 +1480,127 @@ mod tests {
         assert!(data.member_index(&bob).is_none());
         assert!(data.member_index(&alice).is_some());
         drop(data);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn host_remove_with_bot_takeover_keeps_the_game_running() {
+        let (app, room, alice, bob, dir) = three_players("remove-mid-bot");
+        app.start_game(&room, &alice).unwrap();
+        let bob_seat = room.data.lock().unwrap().member_index(&bob).unwrap();
+        let (bob_token_before, vp_before) = {
+            let mut data = room.data.lock().unwrap();
+            let token = data.members[bob_seat].token.clone();
+            let game = data.game.as_mut().unwrap();
+            game.players[bob_seat]
+                .resources
+                .add(crate::game::resources::Resource::Wood, 2);
+            (token, game.total_victory_points(bob_seat))
+        };
+
+        let outcome = room
+            .data
+            .lock()
+            .unwrap()
+            .remove_player_with(&alice, bob_seat, LeaveChoice::Bot);
+        assert_eq!(outcome, Ok(SeatOutcome::Continued { name: "Bob".into() }));
+
+        let data = room.data.lock().unwrap();
+        let game = data.game.as_ref().unwrap();
+        assert!(!game.is_over(), "the game keeps running for everyone else");
+        let seat = &data.members[bob_seat];
+        assert!(seat.is_bot, "the kicked seat becomes a bot");
+        assert_eq!(seat.level, BotLevel::Medium, "takeover uses a Medium bot");
+        assert!(!seat.left, "the seat is live, not emptied");
+        assert!(
+            game.players[bob_seat].is_bot,
+            "the engine also treats the seat as a bot (AI turns)"
+        );
+        assert_eq!(
+            game.total_victory_points(bob_seat),
+            vp_before,
+            "the bot keeps the kicked player's game state"
+        );
+        assert_ne!(seat.token, bob_token_before, "the seat token is rotated");
+        assert!(
+            data.member_index(&bob).is_none(),
+            "the kicked player's old session is dead"
+        );
+        assert_eq!(
+            data.host_token, alice,
+            "the host badge stays with the host who kicked"
+        );
+        assert!(data.is_host(&alice));
+        assert!(
+            !data.members[2].is_bot && data.member_index(&data.members[2].token).is_some(),
+            "the other human keeps their seat"
+        );
+        assert!(
+            game.log
+                .iter()
+                .any(|l| l.text.contains("Bob was removed by the host — a bot takes over.")),
+            "the log records the takeover and who caused it"
+        );
+        drop(data);
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn host_remove_with_bot_takeover_rejected_when_only_one_human_would_remain() {
+        let (app, room, alice, bob, dir) = two_players("remove-mid-bot-alone");
+        app.start_game(&room, &alice).unwrap();
+        let bob_seat = room.data.lock().unwrap().member_index(&bob).unwrap();
+
+        let err = room
+            .data
+            .lock()
+            .unwrap()
+            .remove_player_with(&alice, bob_seat, LeaveChoice::Bot);
+        assert_eq!(
+            err,
+            Err(
+                "Passing this seat to a bot would leave only one human. End the game instead."
+                    .into()
+            )
+        );
+        {
+            let data = room.data.lock().unwrap();
+            let game = data.game.as_ref().unwrap();
+            assert!(!game.is_over(), "a refused kick leaves the game intact");
+            assert!(!data.members[bob_seat].is_bot, "Bob stays human");
+            assert!(data.member_index(&bob).is_some());
+            assert!(data.is_host(&alice));
+        }
+
+        // The same choice with End still works.
+        let ended = room.data.lock().unwrap().remove_player(&alice, bob_seat);
+        assert_eq!(ended, Ok(SeatOutcome::Ended { name: "Bob".into() }));
+        let data = room.data.lock().unwrap();
+        assert!(data.game.as_ref().unwrap().is_over());
+        assert!(data.members[bob_seat].left);
+        assert!(data.member_index(&bob).is_none(), "the kicked token is dead");
+        drop(data);
+        let _ = app;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn host_cannot_pass_a_bot_seat_to_a_bot() {
+        let (app, room, alice, bob, dir) = two_players("remove-bot-seat");
+        room.data.lock().unwrap().add_bot(BotLevel::Medium);
+        app.start_game(&room, &alice).unwrap();
+        let bot_seat = 2;
+        assert!(room.data.lock().unwrap().members[bot_seat].is_bot);
+
+        let err = room
+            .data
+            .lock()
+            .unwrap()
+            .remove_player_with(&alice, bot_seat, LeaveChoice::Bot);
+        assert_eq!(err, Err("That seat is already a bot.".into()));
+        assert!(!room.data.lock().unwrap().game.as_ref().unwrap().is_over());
+        let _ = (bob, app);
         std::fs::remove_dir_all(&dir).ok();
     }
 

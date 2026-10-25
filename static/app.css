@@ -81,9 +81,6 @@ select,input[type=text],input[type=number]{background:#0f151b;color:#e9eef2;bord
 .pcard .pact{margin-top:5px}
 .pcard .pact .btn{width:100%}
 .pcard .pact+.pact{margin-top:2px}
-.pcard .leave-next{display:flex;flex-direction:column;gap:2px;margin-bottom:4px;width:100%}
-.pcard .leave-next span{font-size:9px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;opacity:.85}
-.pcard .leave-next select{font-size:10px;padding:2px 4px;min-height:0;width:100%}
 body:not(.game) .leavehost{display:flex;flex-direction:column;gap:8px;align-items:stretch}
 body:not(.game) .leavehost select{width:100%}
 .dot{width:14px;height:14px;border-radius:50%;border:1px solid #0006;flex:0 0 auto}
@@ -139,6 +136,9 @@ body.pwa{--titlebar-h:44px}
 /* Round board-style toggle (theme-switch style). */
 .tb-btn.round{border-radius:999px;width:34px;height:34px}
 .tb-btn.round .ic{width:19px;height:19px}
+/* One deliberate management action instead of a per-card control strip. */
+.tb-btn.tb-manage{width:auto;min-width:40px;height:40px;padding:0 10px;gap:6px;font-size:12px;font-weight:800;white-space:nowrap;flex:0 1 auto}
+.tb-btn.tb-manage .ic{width:17px;height:17px}
 .tb-chip{display:flex;align-items:center;gap:4px;background:#ffffff1f;border-radius:9px;padding:5px 7px;font-weight:800;font-size:12px;color:#fff}
 .tb-chip .ic{width:15px;height:15px}
 .tb-chip .glyph{width:15px;height:15px}
@@ -318,7 +318,22 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
 .picker{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
 .trade-preview{display:flex;align-items:center;justify-content:center;gap:10px;font-size:18px;background:#00000010;border-radius:10px;padding:8px;margin-bottom:10px;min-height:44px;color:#2b2118}
 .trade-preview .arrow,.arrow{color:#8a7c66;font-size:18px}
-.btn.sheetbtn{border-radius:12px;font-weight:800}
+.btn.sheetbtn{border-radius:12px;font-weight:800;min-height:44px}
+.btn.sheetbtn.wide{width:100%;justify-content:center}
+.sheet-actions{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.sheet-form{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.sheet .leave-next{display:flex;flex-direction:column;gap:4px;width:100%}
+.sheet .leave-next span{font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#6c6154}
+.sheet .leave-next select{width:100%;min-height:40px;font-size:14px}
+.sheet .muted.small{margin:8px 0 0;font-size:12px}
+/* Manage players list (host kick flow) */
+.manage-list{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.manage-row{display:flex;align-items:center;gap:10px;background:#0000000a;border-radius:10px;padding:7px 10px}
+.manage-who{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.manage-name{font-weight:800;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.manage-row .bot-tag{font-size:10px;font-weight:800;letter-spacing:.3px;text-transform:uppercase;background:#00000014;border-radius:6px;padding:2px 6px;flex:0 0 auto}
+.manage-row .btn{flex:0 0 auto;min-height:40px}
+#manage{display:contents}
 
 /* Toasts + notifications */
 .toasts{position:fixed;left:50%;top:calc(10px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:72;max-width:calc(100% - 24px)}
@@ -360,10 +375,19 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
 }
 @media(max-width:860px){body:not(.game) .wrap{padding:10px}}
 @media(max-width:430px){
- .topbar{gap:4px;padding:5px 6px 3px}
+ .topbar{gap:2px;padding:5px 4px 3px}
  .tb-btn{width:34px;height:34px;border-radius:10px}
- .reschip{padding:2px 4px 2px 3px;font-size:11px;gap:3px}
- .reschip .rc-glyphbox .glyph{width:13px;height:13px}
+ .tb-btn.round{width:32px;height:32px}
+ body.game #audio-toggle{width:32px;height:32px}
+ .tb-btn.tb-manage{width:auto;height:40px;padding:0 4px;gap:4px;font-size:11px}
+ .tb-btn.tb-manage .ic{width:15px;height:15px}
+ /* Keep all five bank counts on a 390px phone next to the extra control. */
+ .bank-ic{display:none}
+ .bank{gap:2px}
+ .reschip{padding:1px;font-size:10px;gap:1px}
+ .reschip .rc-num{min-width:11px}
+ .reschip .rc-glyphbox{padding:1px}
+ .reschip .rc-glyphbox .glyph{width:11px;height:11px}
  .tb-chip{padding:4px 5px;font-size:11px}
  .tb-chip .ic{width:14px;height:14px}
  .bank-ic .ic{width:17px;height:17px}

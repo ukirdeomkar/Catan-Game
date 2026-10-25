@@ -856,6 +856,10 @@ pub struct Fragments {
     /// resource picker follows the viewer's live layout instead of the layout
     /// that was active at page load.
     pub trade_modal: Markup,
+    /// The viewer's leave / manage-game sheets. Re-sent on every version bump
+    /// so a kicked seat shows up as a bot immediately instead of leaving a
+    /// stale human row in the player list.
+    pub manage: Markup,
 }
 
 pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Fragments {
@@ -874,6 +878,7 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
                 log: Markup::default(),
                 turn: Markup::default(),
                 trade_modal: Markup::default(),
+                manage: Markup::default(),
             };
         }
     }
@@ -890,6 +895,9 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
         log: log_frag(game),
         turn: turn_frag(game, data, viewer),
         trade_modal: viewer.map(|v| trade_modal(game, data, v)).unwrap_or_default(),
+        manage: viewer
+            .map(|v| manage_frag(game, data, v))
+            .unwrap_or_default(),
     }
 }
 
@@ -947,6 +955,11 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             div #trades.trades sse-swap="trades" { (f.trades) }
             div #turn.dockwrap sse-swap="turn" { (f.turn) }
             div #hand.handstrip sse-swap="hand" { (f.hand) }
+            // Live-managed sheets: re-sent on every bump so the kick list
+            // cannot keep showing a seat that just became a bot. The container
+            // exists even while blinded (with empty content), so a full reload
+            // during a pause still gets the sheets back on resume.
+            div #manage.manage-sheets sse-swap="manage" { (f.manage) }
             // The info sheet and trade modal expose board/log/hand state, so a
             // blinded viewer never receives them (they are absent from the DOM).
             @if !blinded {
@@ -974,6 +987,13 @@ fn status_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> M
     let next = if layout == Layout::Board { "classic" } else { "board" };
     let layout_url = format!("/room/{}/layout", data.code);
     let next_vals = format!(r#"{{"layout":"{next}"}}"#);
+    // The whole management surface lives behind one top-right control: hosts
+    // get "Manage game", everyone else gets "Leave game" (or "Leave" once the
+    // game is over, when there is nothing left to manage).
+    let token = viewer.and_then(|v| data.members.get(v)).map(|m| m.token.as_str());
+    let is_host = token.is_some_and(|t| data.is_host(t));
+    let game_over = game.is_over();
+    let leave_label = if game_over { "Leave" } else { "Leave game" };
     html! {
         button.tb-btn type="button" data-sheet-open="menu" title="Menu & info" aria-label="Menu" { (ic("menu")) }
         div.bank title="Resources left in the bank" {
@@ -986,6 +1006,21 @@ fn status_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> M
             }
         }
         div.tb-right {
+            @if token.is_some() {
+                @if is_host && !game_over {
+                    button.tb-btn.tb-manage type="button" data-sheet-open="manage"
+                        title="Manage game" aria-label="Manage game" {
+                        (ic("users"))
+                        span.tb-manage-label { "Manage game" }
+                    }
+                } @else {
+                    button.tb-btn.tb-manage type="button" data-sheet-open="leave"
+                        title=(leave_label) aria-label=(leave_label) {
+                        (ic("x"))
+                        span.tb-manage-label { (leave_label) }
+                    }
+                }
+            }
             button.tb-btn.round type="button" title="Switch board style" aria-label="Switch board style"
                 hx-post=(layout_url) hx-vals=(next_vals) { (ic("palette")) }
             button #audio-toggle type="button" title="Toggle sound" aria-label="Toggle sound" { "🔊" }
@@ -1002,31 +1037,6 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
     let order: Vec<PlayerId> = match viewer {
         Some(v) => (0..n).map(|i| (v + i) % n).collect(),
         None => (0..n).collect(),
-    };
-    let my_token = viewer.and_then(|v| data.members.get(v)).map(|m| m.token.clone());
-    let i_am_host = my_token.as_deref().is_some_and(|t| data.is_host(t));
-    let remove_url = format!("/room/{}/remove", data.code);
-    let leave_url = format!("/room/{}/leave", data.code);
-    let other_humans: Vec<usize> = data
-        .members
-        .iter()
-        .enumerate()
-        .filter(|(idx, m)| Some(*idx) != viewer && !m.is_bot)
-        .map(|(idx, _)| idx)
-        .collect();
-    let game_over = game.is_over();
-    // After the game is over there is nothing for a bot to take over, so the
-    // only option is to leave.
-    let leave_label = if game_over { "Leave" } else { "End game" };
-    let leave_confirm = if game_over {
-        "Leave this finished game?"
-    } else {
-        "Leave and end the game for everyone?"
-    };
-    let leave_title = if game_over {
-        "Leave the finished game"
-    } else {
-        "Leave and end the game"
     };
     html! {
         @for pid in order {
@@ -1077,48 +1087,6 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                                 span.ph-row {
                                     span.ph-l { "gives" }
                                     @for r in &gives { span.ph-r { (res_glyph(*r)) } }
-                                }
-                            }
-                        }
-                    }
-                }
-                // Host-only remove (never themselves) and explicit leave
-                // choices for the viewer, host included. Remove still ends the
-                // game; leave offers end-game or a Medium-bot takeover.
-                @if !left {
-                    @if i_am_host && !is_me {
-                        form.pact hx-post=(remove_url) hx-vals=(format!(r#"{{"player":"{pid}"}}"#))
-                            onsubmit="return confirm('Remove this player? The game ends for everyone.')" {
-                            button.btn.warn.tiny type="submit"
-                                title=(format!("Remove {}. The game ends for everyone.", p.name)) {
-                                (ic("trash")) "Remove"
-                            }
-                        }
-                    } @else if is_me {
-                        form.pact hx-post=(leave_url) data-leave="end"
-                            onsubmit=(format!("return confirm('{leave_confirm}')")) {
-                            input type="hidden" name="mode" value="end";
-                            button.btn.warn.tiny type="submit" title=(leave_title) {
-                                (ic("x")) (leave_label)
-                            }
-                        }
-                        @if !other_humans.is_empty() && !game_over {
-                            form.pact hx-post=(leave_url) data-leave="bot"
-                                onsubmit="return confirm('Leave and let a Medium bot take over your seat?')" {
-                                input type="hidden" name="mode" value="bot";
-                                @if i_am_host {
-                                    label.leave-next {
-                                        span { "Next host" }
-                                        select name="next_host" {
-                                            @for idx in &other_humans {
-                                                @let m = &data.members[*idx];
-                                                option value=(*idx) { (m.name) }
-                                            }
-                                        }
-                                    }
-                                }
-                                button.btn.sec.tiny type="submit" title="Leave and let a bot continue your seat" {
-                                    (ic("users")) "Continue with bot"
                                 }
                             }
                         }
@@ -1542,6 +1510,193 @@ fn menu_sheet(code: &str, data: &RoomData, game: &GameState, _viewer: Option<Pla
             div #log.logbox sse-swap="log" { (log_frag(game)) }
             p.muted.small style="margin-top:12px" {
                 a href=(url) { "Refresh" }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Leave / Manage game sheets
+// ---------------------------------------------------------------------------
+
+/// How a seat row is described in the manage list.
+fn seat_role_label(is_bot: bool, left: bool) -> Option<&'static str> {
+    if left {
+        Some("Left")
+    } else if is_bot {
+        Some("Bot")
+    } else {
+        None
+    }
+}
+
+/// The viewer's management sheets, rendered once inside `#manage`.
+///
+/// Hosts get the deliberate two-step flow: a primary list (Leave game /
+/// Manage players), a second step for the choice, and a third step per seat for
+/// a kick. Everyone else, and a host after the game is over, gets the single
+/// Leave sheet. Steps are separate sheets, so only one is ever on screen.
+fn manage_frag(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
+    let Some(me) = data.members.get(v) else {
+        return Markup::default();
+    };
+    if me.is_bot {
+        return Markup::default();
+    }
+    let is_host = data.is_host(&me.token);
+    let game_over = game.is_over();
+    let leave_url = format!("/room/{}/leave", data.code);
+    let remove_url = format!("/room/{}/remove", data.code);
+    let live_humans_excluding = |target: usize| {
+        data.members
+            .iter()
+            .enumerate()
+            .filter(|(idx, m)| *idx != target && !m.is_bot && !m.left)
+            .count()
+    };
+    let other_humans: Vec<usize> = data
+        .members
+        .iter()
+        .enumerate()
+        .filter(|(idx, m)| *idx != v && !m.is_bot && !m.left)
+        .map(|(idx, _)| idx)
+        .collect();
+    let others: Vec<usize> = (0..data.members.len()).filter(|idx| *idx != v).collect();
+    let leave_title = if game_over { "Leave" } else { "Leave game" };
+    html! {
+        @if is_host && !game_over {
+            // Step 1: the only management choices on screen.
+            div.sheet data-sheet="manage" hidden {
+                div.sheet-head {
+                    h3 { "Manage game" }
+                    div.grow {}
+                    button.sheet-close type="button" data-sheet-close aria-label="Close" { (ic("x")) }
+                }
+                div.sheet-actions {
+                    button.btn.primary.sheetbtn.wide type="button" data-sheet-open="manage-leave" {
+                        (ic("x")) "Leave game"
+                    }
+                    button.btn.sec.sheetbtn.wide type="button" data-sheet-open="manage-players" {
+                        (ic("users")) "Manage players"
+                    }
+                    button.btn.sec.sheetbtn.wide type="button" data-sheet-close { "Close" }
+                }
+            }
+            // Step 2a: how the host wants to leave.
+            div.sheet data-sheet="manage-leave" hidden {
+                div.sheet-head {
+                    h3 { "Leave game" }
+                    div.grow {}
+                    button.sheet-close type="button" data-sheet-close aria-label="Close" { (ic("x")) }
+                }
+                @if !other_humans.is_empty() {
+                    form.sheet-form data-leave="bot" hx-post=(leave_url) {
+                        input type="hidden" name="mode" value="bot";
+                        label.leave-next {
+                            span { "Next host" }
+                            select name="next_host" {
+                                @for idx in &other_humans {
+                                    option value=(*idx) { (data.members[*idx].name) }
+                                }
+                            }
+                        }
+                        button.btn.primary.sheetbtn.wide type="submit" {
+                            "Pass my seat to a bot"
+                        }
+                    }
+                } @else {
+                    p.muted.small {
+                        "Only End the game is available when no other humans remain."
+                    }
+                }
+                div.sheet-actions {
+                    form.sheet-form data-leave="end" hx-post=(leave_url) {
+                        input type="hidden" name="mode" value="end";
+                        button.btn.warn.sheetbtn.wide type="submit" { "End game for everyone" }
+                    }
+                    button.btn.sec.sheetbtn.wide type="button" data-sheet-open="manage" { "Back" }
+                }
+            }
+            // Step 2b: pick a seat. The list is re-sent over SSE, so a seat
+            // that just became a bot updates in place instead of going stale.
+            div.sheet data-sheet="manage-players" hidden {
+                div.sheet-head {
+                    h3 { "Manage players" }
+                    div.grow {}
+                    button.sheet-close type="button" data-sheet-close aria-label="Close" { (ic("x")) }
+                }
+                div.manage-list {
+                    @for pid in &others {
+                        @let m = &data.members[*pid];
+                        div.manage-row {
+                            div.manage-who {
+                                span.manage-name { (m.name) }
+                                @if let Some(role) = seat_role_label(m.is_bot, m.left) {
+                                    span.bot-tag { (role) }
+                                }
+                            }
+                            @if !m.left {
+                                button.btn.warn.tiny type="button"
+                                    data-sheet-open=(format!("manage-kick-{pid}"))
+                                    aria-label=(format!("Kick {}", m.name)) { "Kick" }
+                            }
+                        }
+                    }
+                }
+                div.sheet-actions {
+                    button.btn.sec.sheetbtn.wide type="button" data-sheet-open="manage" { "Back" }
+                }
+            }
+            // Step 3: what happens to the kicked seat.
+            @for pid in &others {
+                @let m = &data.members[*pid];
+                @let can_bot = !m.is_bot && !m.left && live_humans_excluding(*pid) >= 2;
+                div.sheet data-sheet=(format!("manage-kick-{pid}")) hidden {
+                    div.sheet-head {
+                        h3 { "Kick " (m.name) }
+                        div.grow {}
+                        button.sheet-close type="button" data-sheet-close aria-label="Close" { (ic("x")) }
+                    }
+                    @if can_bot {
+                        form.sheet-form data-kick="bot" hx-post=(remove_url) {
+                            input type="hidden" name="player" value=(*pid);
+                            input type="hidden" name="mode" value="bot";
+                            button.btn.primary.sheetbtn.wide type="submit" { "Pass seat to a bot" }
+                        }
+                    }
+                    div.sheet-actions {
+                        form.sheet-form data-kick="end" hx-post=(remove_url) {
+                            input type="hidden" name="player" value=(*pid);
+                            input type="hidden" name="mode" value="end";
+                            button.btn.warn.sheetbtn.wide type="submit" { "End game for everyone" }
+                        }
+                        button.btn.sec.sheetbtn.wide type="button" data-sheet-open="manage-players" { "Back" }
+                    }
+                }
+            }
+        } @else {
+            // Everyone else: one sheet, at most three stacked choices.
+            div.sheet data-sheet="leave" hidden {
+                div.sheet-head {
+                    h3 { (leave_title) }
+                    div.grow {}
+                    button.sheet-close type="button" data-sheet-close aria-label="Close" { (ic("x")) }
+                }
+                @if !game_over && !other_humans.is_empty() {
+                    form.sheet-form data-leave="bot" hx-post=(leave_url) {
+                        input type="hidden" name="mode" value="bot";
+                        button.btn.primary.sheetbtn.wide type="submit" { "Pass my seat to a bot" }
+                    }
+                }
+                div.sheet-actions {
+                    form.sheet-form data-leave="end" hx-post=(leave_url) {
+                        input type="hidden" name="mode" value="end";
+                        button.btn.warn.sheetbtn.wide type="submit" {
+                            @if game_over { "Leave the finished game" } @else { "End game for everyone" }
+                        }
+                    }
+                    button.btn.sec.sheetbtn.wide type="button" data-sheet-close { "Cancel" }
+                }
             }
         }
     }
