@@ -432,6 +432,7 @@ fn render_events(app: &AppState, code: &str, token: &str) -> Vec<Result<Event, I
         mk("controls", f.controls),
         mk("trades", f.trades),
         mk("trade_modal", f.trade_modal),
+        mk("manage", f.manage),
         mk("log", f.log),
         mk("turn", f.turn),
         // Any lobby viewer still waiting should drop into the game now.
@@ -916,12 +917,22 @@ fn form_error(headers: &HeaderMap, status: StatusCode, msg: &str) -> Response {
 }
 
 /// Host-only: drop another seat. In the lobby the slot is freed; once the game
-/// is running it ends for everyone in the room.
+/// is running `mode=end` (the default) ends it for everyone, while `mode=bot`
+/// hands the seat to a Medium bot and keeps the game going.
+#[derive(Debug, Default, serde::Deserialize)]
+struct RemoveForm {
+    #[serde(default)]
+    player: Option<usize>,
+    /// Absent means `end`, so the older lobby forms keep working unchanged.
+    #[serde(default)]
+    mode: Option<String>,
+}
+
 async fn remove_player(
     State(app): State<Arc<AppState>>,
     Path(code): Path<String>,
     headers: HeaderMap,
-    Form(form): Form<HashMap<String, String>>,
+    Form(form): Form<RemoveForm>,
 ) -> Response {
     let code = code.to_uppercase();
     let Some(room) = app.room(&code) else {
@@ -930,12 +941,17 @@ async fn remove_player(
     let Some(token) = cookie_value(&headers, &cookie_name(&code)) else {
         return toast("Your session expired. Reload the page.");
     };
-    let Some(target) = form.get("player").and_then(|p| p.parse::<usize>().ok()) else {
+    let Some(target) = form.player else {
         return toast("Which player? Reload the page.");
+    };
+    let choice = match form.mode.as_deref() {
+        None | Some("end") => LeaveChoice::End,
+        Some("bot") => LeaveChoice::Bot,
+        Some(_) => return toast("Choose how to remove this player."),
     };
     let outcome = {
         let mut data = room.data.lock().unwrap();
-        data.remove_player(&token, target)
+        data.remove_player_with(&token, target, choice)
     };
     // An empty 200 clears the toast area; the bumped room pushes the new lobby
     // fragment / game-over state over SSE, so no reload is needed.
@@ -1568,11 +1584,12 @@ mod tests {
     }
 
     #[test]
-    fn midgame_leave_fragments_offer_end_or_bot_takeover() {
-        let app = test_app("leave-choices");
+    fn midgame_cards_are_information_only_and_management_is_step_by_step() {
+        let app = test_app("manage-choices");
         let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
         let code = room.data.lock().unwrap().code.clone();
         let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        let (_, _carol) = app.join(&code, "Carol".into()).unwrap();
         app.start_game(&room, &alice).unwrap();
         let (alice_seat, bob_seat) = {
             let data = room.data.lock().unwrap();
@@ -1582,52 +1599,78 @@ mod tests {
             )
         };
 
-        let (bob_html, alice_html) = {
+        let (host, guest) = {
             let data = room.data.lock().unwrap();
             let game = data.game.as_ref().unwrap();
             (
-                render::fragments(game, &data, Some(bob_seat))
-                    .players
-                    .into_string(),
-                render::fragments(game, &data, Some(alice_seat))
-                    .players
-                    .into_string(),
+                render::fragments(game, &data, Some(alice_seat)),
+                render::fragments(game, &data, Some(bob_seat)),
             )
         };
-        for html in [&bob_html, &alice_html] {
-            assert!(html.contains("End game"), "every human can end the game");
-            assert!(
-                html.contains("Continue with bot"),
-                "every human can leave a bot behind"
-            );
-            assert!(html.contains("name=\"mode\" value=\"end\""));
-            assert!(html.contains("name=\"mode\" value=\"bot\""));
+        let host_players = host.players.into_string();
+        let guest_players = guest.players.into_string();
+        let host_status = host.status.into_string();
+        let guest_status = guest.status.into_string();
+        let host_manage = host.manage.into_string();
+        let guest_manage = guest.manage.into_string();
+
+        // Player cards carry no management actions at all.
+        for html in [&host_players, &guest_players] {
+            for gone in ["Remove", "End game", "Continue with bot", "Next host", "data-sheet-open"] {
+                assert!(
+                    !html.contains(gone),
+                    "player cards must be information-only, found {gone:?}: {html}"
+                );
+            }
         }
+
+        // The top bar is the only management affordance.
+        assert!(host_status.contains("Manage game"));
+        assert!(host_status.contains(r#"data-sheet-open="manage""#));
+        assert!(guest_status.contains("Leave game"));
+        assert!(guest_status.contains(r#"data-sheet-open="leave""#));
+
+        // Host: two-step list, then leave / players, then kick.
+        assert!(host_manage.contains(r#"data-sheet="manage""#));
+        assert!(host_manage.contains(r#"data-sheet-open="manage-leave""#));
+        assert!(host_manage.contains(r#"data-sheet-open="manage-players""#));
+        assert!(host_manage.contains(r#"data-sheet="manage-leave""#));
+        assert!(host_manage.contains("Pass my seat to a bot"));
+        assert!(host_manage.contains("End game for everyone"));
         assert!(
-            alice_html.contains("name=\"next_host\""),
+            host_manage.contains(r#"name="next_host""#),
             "a leaving host picks the next host on the continue path"
         );
-        assert!(
-            !bob_html.contains("name=\"next_host\""),
-            "a non-host leaver does not pick a host"
-        );
+        assert!(host_manage.contains(r#"data-sheet="manage-kick-"#));
+        assert!(host_manage.contains("Pass seat to a bot"));
+        assert!(host_manage.contains("Manage players"));
+
+        // Non-host: one sheet, no host picker, no player management.
+        assert!(guest_manage.contains(r#"data-sheet="leave""#));
+        assert!(guest_manage.contains("Pass my seat to a bot"));
+        assert!(guest_manage.contains("End game for everyone"));
+        assert!(!guest_manage.contains(r#"name="next_host""#));
+        assert!(!guest_manage.contains("Manage players"));
+        assert!(!guest_manage.contains(r#"data-sheet="manage""#));
 
         // Only bots remain after the last human: end-game is the only choice.
         let (room2, alice2) = app.create_room("Solo".into(), 0, false).unwrap();
         room2.data.lock().unwrap().add_bot(BotLevel::Medium);
         app.start_game(&room2, &alice2).unwrap();
-        let solo_html = {
+        let solo = {
             let data = room2.data.lock().unwrap();
             let game = data.game.as_ref().unwrap();
-            render::fragments(game, &data, Some(0))
-                .players
-                .into_string()
+            (
+                render::fragments(game, &data, Some(0)).status.into_string(),
+                render::fragments(game, &data, Some(0)).manage.into_string(),
+            )
         };
-        assert!(solo_html.contains("End game"));
+        assert!(solo.0.contains("Manage game"), "the solo host still manages");
         assert!(
-            !solo_html.contains("Continue with bot"),
+            !solo.1.contains("Pass my seat to a bot"),
             "with no other humans, a bot takeover is not offered"
         );
+        assert!(solo.1.contains("End game for everyone"));
         let _ = app;
         std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
