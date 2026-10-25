@@ -186,11 +186,15 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .find_map(|part| part.strip_prefix(&needle).map(|v| v.to_string()))
 }
 
+/// The room token is the only identity a player has, so it must never travel
+/// over plaintext HTTP: `Secure` keeps the browser from attaching it to an
+/// `http://` request. Browsers treat `localhost` as trustworthy, so local
+/// development on HTTP still works.
 fn set_cookie_header(code: &str, token: &str) -> (header::HeaderName, String) {
     (
         header::SET_COOKIE,
         format!(
-            "{}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000",
+            "{}={token}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=31536000",
             cookie_name(code)
         ),
     )
@@ -200,7 +204,10 @@ fn set_cookie_header(code: &str, token: &str) -> (header::HeaderName, String) {
 fn clear_cookie_header(code: &str) -> (header::HeaderName, String) {
     (
         header::SET_COOKIE,
-        format!("{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", cookie_name(code)),
+        format!(
+            "{}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0",
+            cookie_name(code)
+        ),
     )
 }
 
@@ -1176,6 +1183,62 @@ mod tests {
             assert!(!body.contains("Back to game"), "{raw:?} must not produce a return path");
             assert!(body.contains("Back to home"), "{raw:?} still needs the Home path");
         }
+    }
+
+    fn set_cookie(res: &Response) -> String {
+        res.headers()
+            .get(header::SET_COOKIE)
+            .expect("the response must set the room cookie")
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn create_sets_a_secure_httponly_room_cookie() {
+        let app = test_app("cookie-create");
+        let res = create(
+            State(app.clone()),
+            Form(NameForm {
+                name: "Al".into(),
+                turn_seconds: 180,
+                allow_pause: None,
+            }),
+        )
+        .await;
+
+        let cookie = set_cookie(&res);
+        assert!(
+            cookie.contains("; Secure"),
+            "the room token must not go over HTTP: {cookie}"
+        );
+        assert!(
+            cookie.contains("; HttpOnly"),
+            "scripts must not read the token: {cookie}"
+        );
+        assert!(
+            cookie.contains("Path=/"),
+            "the cookie must stay scoped to the site: {cookie}"
+        );
+        assert!(
+            cookie.contains("SameSite=Lax"),
+            "cross-site requests must not carry the token: {cookie}"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn clearing_the_room_cookie_keeps_the_secure_flag() {
+        let (name, value) = clear_cookie_header("ABCD");
+        assert_eq!(name, header::SET_COOKIE);
+        assert!(
+            value.contains("; Secure"),
+            "the clearing cookie must match the set one: {value}"
+        );
+        assert!(
+            value.contains("Max-Age=0"),
+            "the clearing cookie must expire: {value}"
+        );
     }
 
     fn cookie_headers(code: &str, token: &str) -> HeaderMap {
