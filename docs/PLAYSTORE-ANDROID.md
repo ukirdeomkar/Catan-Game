@@ -10,8 +10,8 @@ The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org`
 |-------|-------|
 | Android package name | `org.playcatanou.twa` |
 | Host | `playcatanou.duckdns.org` |
-| `versionCode` | `1` |
-| `versionName` | `1.0.0` |
+| `versionCode` | `2` (launcher-icon fix, OMK-464; Play upload pending) |
+| `versionName` | `1.1.0` |
 | `minSdkVersion` | 24 |
 | `targetSdkVersion` | 36 (set by the Bubblewrap/AGP template) |
 | Keystore alias | `catanou-upload` |
@@ -25,6 +25,39 @@ the Play Store listing.
 The package name is the CEO decision recorded for issue #14 and is used consistently in
 the Bubblewrap manifest, `assetlinks.json`, and this doc. It must not change after the
 first Play upload.
+
+## Launcher icon (maskable / adaptive)
+
+Android launcher icons are **adaptive icons**: the system masks the outer third of the
+108dp layer and draws a background layer underneath the foreground art. Bubblewrap's
+template uses a **white** `ic_launcher_background`, so artwork without a maskable variant
+was inset into the safe zone on white — the white ring reported in GitHub #47.
+
+The repo now ships maskable artwork alongside the existing `any` icons:
+
+| Asset | Contents |
+|-------|----------|
+| `static/branding/icon-maskable-192.png` | 192x192, full-bleed `#12181f`, logo at 66% |
+| `static/branding/icon-maskable-512.png` | 512x512, full-bleed `#12181f`, logo at 66% |
+
+Both are declared in `static/branding/site.webmanifest` with `"purpose": "maskable"`; the
+`any` and `apple-touch` icons are unchanged. The artwork is scaled to 66% so the plaque
+stays inside the adaptive-icon safe zone — a circular or squircle mask crops only the
+dark wooden frame, never the logo.
+
+The generated Android project must opt into them. After `bubblewrap init`, edit
+`twa-manifest.json`:
+
+- `"maskableIconUrl": "https://playcatanou.duckdns.org/static/branding/icon-maskable-512.png"`
+- `"backgroundColor": "#12181f"`
+
+If the generated project hardcodes a white `ic_launcher_background` (Bubblewrap versions
+differ), change that resource to `#12181f` as well. Keep `iconUrl` pointing at the regular
+`icon-512.png`.
+
+**Limitation:** nothing in this repo can change the icon of an already-installed Play app.
+The device-visible fix requires building a new `.aab` (versionCode bump) and uploading it
+to Play.
 
 ## Signing
 
@@ -75,10 +108,12 @@ Bubblewrap generates the Android project from `twa-manifest.json`. To start a fr
 npx @bubblewrap/cli init \
   --manifest https://playcatanou.duckdns.org/static/branding/site.webmanifest
 # edit twa-manifest.json: packageId org.playcatanou.twa, signingKey path/alias,
-# minSdkVersion 24 (Play requires >= 24), versions
+# minSdkVersion 24 (Play requires >= 24), versions,
+# maskableIconUrl (icon-maskable-512.png) and backgroundColor #12181f
 npx @bubblewrap/cli build
 ```
 
 `bubblewrap build` writes `./app-release-bundle.aab` (signed) alongside
 `./app-release-signed.apk`. Bump `appVersionCode` for every Play upload; `appVersionName`
-is the user-visible version.
+is the user-visible version. The current source is uploaded once the `.aab` is built; the
+Play upload itself is board/friend-owned.
