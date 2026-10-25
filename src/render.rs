@@ -1859,17 +1859,6 @@ fn log_frag(game: &GameState) -> Markup {
 // End-of-game replay (issue #13)
 // ---------------------------------------------------------------------------
 
-/// Arrow-key stepping for the replay page. Progressive enhancement only: the
-/// prev/next links work on their own when JS is unavailable.
-const REPLAY_JS: &str = r#"
-document.addEventListener('keydown', function (e) {
-  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-  var sel = e.key === 'ArrowLeft' ? '[data-replay-prev]' : '[data-replay-next]';
-  var a = document.querySelector(sel);
-  if (a && a.getAttribute('href')) { e.preventDefault(); location.href = a.getAttribute('href'); }
-});
-"#;
-
 /// A short, human-readable description of a recorded move, without the actor.
 fn action_summary(action: &Action) -> String {
     match action {
@@ -1948,9 +1937,10 @@ fn replay_players_frag(game: &GameState, _data: &RoomData, viewer: Option<Player
     }
 }
 
-/// Full-page, read-only move-history viewer for a finished game. `game` is the
-/// board state reconstructed up to move `n`; `total` is the recorded move count.
-pub fn replay_page(
+/// The swappable part of the replay page: position bar, board, side panel and
+/// move list. `game` is the board state reconstructed up to move `n`; `total`
+/// is the recorded move count.
+fn replay_root(
     code: &str,
     data: &RoomData,
     game: &GameState,
@@ -1978,8 +1968,10 @@ pub fn replay_page(
     };
     let actor_name = |idx: usize| game.players.get(idx).map(|p| p.name.clone()).unwrap_or_default();
 
-    shell("Game replay", html! {
-        div.wrap.page.replay {
+    // Same shape for prev/next and the move list: fetch the frame in place,
+    // replace the stage, and keep the URL shareable/back-button friendly.
+    html! {
+        div #replay-root .replay-stage {
             div.replay-bar {
                 a.btn.sec href=(format!("/room/{code}")) { "Back to game" }
                 h1 { "Game replay" }
@@ -1988,17 +1980,23 @@ pub fn replay_page(
             div.replay-main {
                 div.replay-board { (replay_board_frag(game, data, viewer)) }
                 div.card.replay-side {
-                    div.replay-now { (current) }
+                    div.replay-now aria-live="polite" { (current) }
                     div.replay-nav {
                         @if at_start {
                             span.btn.sec.disabled { "◀ Prev" }
                         } @else {
-                            a.btn.sec href=(step(prev)) data-replay-prev { "◀ Prev" }
+                            a.btn.sec href=(step(prev)) data-replay-prev
+                                hx-get=(step(prev)) hx-target="#replay-root" hx-swap="outerHTML" hx-push-url="true" {
+                                "◀ Prev"
+                            }
                         }
                         @if at_end {
                             span.btn.sec.disabled { "Next ▶" }
                         } @else {
-                            a.btn.sec href=(step(next)) data-replay-next { "Next ▶" }
+                            a.btn.sec href=(step(next)) data-replay-next
+                                hx-get=(step(next)) hx-target="#replay-root" hx-swap="outerHTML" hx-push-url="true" {
+                                "Next ▶"
+                            }
                         }
                     }
                     (replay_players_frag(game, data, viewer))
@@ -2007,7 +2005,8 @@ pub fn replay_page(
                             @let mark = i + 1;
                             @let label = format!("{} {}", actor_name(m.actor), action_summary(&m.action));
                             li.replay-item.on[mark == n] {
-                                a href=(step(mark)) data-replay-step=(mark) {
+                                a href=(step(mark)) data-replay-step=(mark)
+                                    hx-get=(step(mark)) hx-target="#replay-root" hx-swap="outerHTML" hx-push-url="true" {
                                     span.replay-num { (mark) " " }
                                     span.replay-text { (label) }
                                 }
@@ -2016,9 +2015,41 @@ pub fn replay_page(
                     }
                 }
             }
-            script { (maud::PreEscaped(REPLAY_JS)) }
+        }
+    }
+}
+
+/// Full-page, read-only move-history viewer for a finished game. `game` is the
+/// board state reconstructed up to move `n`; `total` is the recorded move count.
+pub fn replay_page(
+    code: &str,
+    data: &RoomData,
+    game: &GameState,
+    n: usize,
+    total: usize,
+    viewer: Option<PlayerId>,
+) -> Markup {
+    shell("Game replay", html! {
+        div.wrap.page.replay {
+            (replay_root(code, data, game, n, total, viewer))
+            // External so the CSP (`script-src 'self'`) allows it; loaded once
+            // and left outside `#replay-root`, which htmx swaps.
+            script src=(asset("/static/replay.js")) defer {}
         }
     })
+}
+
+/// Fragment response for htmx-driven prev/next on the replay page: just the
+/// stage, so the document and its background never unmount between frames.
+pub fn replay_fragment(
+    code: &str,
+    data: &RoomData,
+    game: &GameState,
+    n: usize,
+    total: usize,
+    viewer: Option<PlayerId>,
+) -> Markup {
+    replay_root(code, data, game, n, total, viewer)
 }
 
 // ---------------------------------------------------------------------------
