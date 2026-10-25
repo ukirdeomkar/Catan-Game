@@ -1451,6 +1451,14 @@ mod tests {
             body.contains(r##"hx-target="#replay-root""##),
             "prev/next must swap the stage in place instead of reloading the page"
         );
+        assert!(
+            body.contains("/static/replay.js"),
+            "arrow-key JS must be an external script so the CSP allows it"
+        );
+        assert!(
+            !body.contains("__catanReplayKeys"),
+            "the replay page must not emit inline JS that `script-src 'self'` blocks"
+        );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 

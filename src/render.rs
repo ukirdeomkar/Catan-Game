@@ -1704,26 +1704,6 @@ fn log_frag(game: &GameState) -> Markup {
 // End-of-game replay (issue #13)
 // ---------------------------------------------------------------------------
 
-/// Arrow-key stepping for the replay page. Progressive enhancement only: the
-/// prev/next links work on their own when JS is unavailable, and the handler
-/// clicks the link so htmx can swap just the stage instead of reloading the
-/// whole document.
-const REPLAY_JS: &str = r#"
-(function () {
-  if (window.__catanReplayKeys) return;
-  window.__catanReplayKeys = true;
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-    var sel = e.key === 'ArrowLeft' ? '[data-replay-prev]' : '[data-replay-next]';
-    var a = document.querySelector(sel);
-    if (!a) return;
-    e.preventDefault();
-    a.click();
-  });
-})();
-"#;
-
 /// A short, human-readable description of a recorded move, without the actor.
 fn action_summary(action: &Action) -> String {
     match action {
@@ -1897,7 +1877,9 @@ pub fn replay_page(
     shell("Game replay", html! {
         div.wrap.page.replay {
             (replay_root(code, data, game, n, total, viewer))
-            script { (maud::PreEscaped(REPLAY_JS)) }
+            // External so the CSP (`script-src 'self'`) allows it; loaded once
+            // and left outside `#replay-root`, which htmx swaps.
+            script src=(asset("/static/replay.js")) defer {}
         }
     })
 }
