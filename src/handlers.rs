@@ -824,7 +824,23 @@ async fn replay(
     let total = game.moves.len();
     let n = q.n.unwrap_or(total).min(total);
     let view = GameState::replay_to(base, &game.moves, n);
-    Html(render::replay_page(&code, &data, &view, n, total, Some(v)).into_string()).into_response()
+    // htmx asks for a frame in place; returning only the stage keeps the
+    // document (and its background) mounted instead of doing a full reload.
+    let body = if is_hx_request(&headers) {
+        render::replay_fragment(&code, &data, &view, n, total, Some(v)).into_string()
+    } else {
+        render::replay_page(&code, &data, &view, n, total, Some(v)).into_string()
+    };
+    Html(body).into_response()
+}
+
+/// True when the request came from htmx (used for fragment-only swaps).
+fn is_hx_request(headers: &HeaderMap) -> bool {
+    headers
+        .get("HX-Request")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 async fn add_bot(
@@ -1430,6 +1446,54 @@ mod tests {
         assert!(
             body.contains("replay-item on"),
             "the currently-shown move must be highlighted"
+        );
+        assert!(
+            body.contains(r##"hx-target="#replay-root""##),
+            "prev/next must swap the stage in place instead of reloading the page"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    /// Finishes the started room so the replay route is allowed.
+    fn finish_room(room: &Arc<Room>) {
+        let mut data = room.data.lock().unwrap();
+        let g = data.game.as_mut().unwrap();
+        let pid = g.current;
+        let v = g.legal_settlement_vertices(pid)[0];
+        g.apply(pid, &Action::PlaceSettlement { vertex: v }).unwrap();
+        g.phase = crate::game::state::Phase::GameOver;
+        g.winner = Some(pid);
+    }
+
+    #[tokio::test]
+    async fn replay_fragment_returns_only_the_swappable_stage() {
+        let (app, room, code, token) = started_room("replay-hx");
+        finish_room(&room);
+        let mut headers = auth_headers(&code, &token);
+        headers.insert("HX-Request", "true".parse().unwrap());
+        let res = replay(
+            State(app.clone()),
+            Path(code.clone()),
+            headers,
+            Query(ReplayQuery { n: Some(1) }),
+        )
+        .await;
+        let body = body_string(res).await;
+        assert!(
+            body.contains(r#"id="replay-root""#),
+            "the fragment must carry the swap target"
+        );
+        assert!(
+            body.contains("<svg"),
+            "the fragment must still render the reconstructed board"
+        );
+        assert!(
+            body.contains("Move 1 / 1"),
+            "the fragment must carry the updated position"
+        );
+        assert!(
+            !body.contains("<html") && !body.contains("htmx.min.js"),
+            "the fragment must not ship a second full document"
         );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
