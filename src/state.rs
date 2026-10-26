@@ -16,6 +16,12 @@ use tokio::sync::watch;
 pub const ROOM_CODE_LEN: usize = 4;
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+/// Hard ceiling on live rooms. Every room costs memory, a persisted JSON file
+/// and one visit per second from `tick_turn_timers`, so an unauthenticated
+/// client must not be able to allocate them without bound. This is far above
+/// what a casual game plausibly hosts at once.
+pub const MAX_ROOMS: usize = 500;
+
 /// Hard cap on a single pause; the room auto-resumes after this long so one
 /// player cannot stall a table indefinitely.
 pub const PAUSE_CAP_MS: u64 = 30 * 60 * 1000;
@@ -411,6 +417,11 @@ impl Room {
 pub struct AppState {
     pub rooms: RwLock<HashMap<String, Arc<Room>>>,
     pub data_dir: PathBuf,
+    /// Per-client throttle for unauthenticated room creation.
+    pub create_limiter: crate::ratelimit::RateLimiter,
+    /// Process-wide fallback used when the client address cannot be trusted
+    /// (a reverse proxy that forwards no client address).
+    pub shared_create_limiter: crate::ratelimit::RateLimiter,
     rng: Mutex<Rng64>,
 }
 
@@ -422,6 +433,8 @@ pub enum JoinError {
     NoName,
     NameTooLong,
     NameTaken,
+    /// The process-wide room ceiling has been reached.
+    TooManyRooms,
 }
 
 impl AppState {
@@ -429,6 +442,8 @@ impl AppState {
         let app = Arc::new(AppState {
             rooms: RwLock::new(HashMap::new()),
             data_dir,
+            create_limiter: crate::ratelimit::RateLimiter::new(10, 10),
+            shared_create_limiter: crate::ratelimit::RateLimiter::new(60, 60),
             rng: Mutex::new(Rng64::from_entropy()),
         });
         app.load_from_disk();
@@ -465,7 +480,13 @@ impl AppState {
         allow_pause: bool,
     ) -> Result<(Arc<Room>, String), JoinError> {
         let name = validate_name(&name)?;
-        let code = self.unique_code();
+        // The cap check, code generation and insert all happen under one write
+        // lock so concurrent creates cannot race past the ceiling.
+        let mut rooms = self.rooms.write().unwrap();
+        if rooms.len() >= MAX_ROOMS {
+            return Err(JoinError::TooManyRooms);
+        }
+        let code = self.unique_code_in(&rooms);
         let token = new_token();
         let data = RoomData {
             code: code.clone(),
@@ -500,10 +521,8 @@ impl AppState {
             bot_key: u64::MAX,
         };
         let room = Room::new(data);
-        self.rooms
-            .write()
-            .unwrap()
-            .insert(code.clone(), room.clone());
+        rooms.insert(code.clone(), room.clone());
+        drop(rooms);
         self.persist(&room);
         Ok((room, token))
     }
@@ -704,8 +723,9 @@ impl AppState {
         false
     }
 
-    fn unique_code(&self) -> String {
-        let rooms = self.rooms.read().unwrap();
+    /// Pick an unused code from `rooms`. Callers hold a lock on the registry so
+    /// the returned code cannot be claimed by a concurrent create.
+    fn unique_code_in(&self, rooms: &HashMap<String, Arc<Room>>) -> String {
         for _ in 0..100 {
             let code: String = {
                 let mut rng = self.rng.lock().unwrap();
@@ -1091,6 +1111,32 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("catan-state-test-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         AppState::new(dir)
+    }
+
+    #[test]
+    fn create_room_stops_at_the_room_ceiling() {
+        let app = test_app("room-ceiling");
+        for _ in 0..MAX_ROOMS {
+            app.create_room("Al".into(), 180, false).unwrap();
+        }
+        assert_eq!(app.rooms.read().unwrap().len(), MAX_ROOMS);
+
+        let err = app
+            .create_room("Bo".into(), 180, false)
+            .map(|(_, token)| token);
+        assert_eq!(
+            err,
+            Err(JoinError::TooManyRooms),
+            "the hard ceiling must be enforced, not advisory"
+        );
+        assert_eq!(app.rooms.read().unwrap().len(), MAX_ROOMS);
+
+        // Freeing one room (the sweeper does this after 24h idle) admits one
+        // more create, so the ceiling does not wedge the server forever.
+        let victim = app.rooms.read().unwrap().keys().next().unwrap().clone();
+        app.rooms.write().unwrap().remove(&victim);
+        assert!(app.create_room("Bo".into(), 180, false).is_ok());
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
     #[test]

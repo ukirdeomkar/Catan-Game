@@ -4,8 +4,8 @@ use crate::game::state::{BotLevel, GameState, MAX_PLAYERS};
 use crate::render;
 use crate::state::{AppState, JoinError, Layout, LeaveChoice, Room, SeatOutcome, ViewMode, now_ms};
 use axum::{
-    extract::{Form, Path, Query, Request, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    extract::{ConnectInfo, Form, Path, Query, Request, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::Next,
     response::{Html, IntoResponse, Redirect, Response, Sse, sse::{Event, KeepAlive}},
     routing::{get, post},
@@ -14,6 +14,7 @@ use axum::{
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::WatchStream;
@@ -45,6 +46,10 @@ pub fn router(app: Arc<AppState>) -> Router {
         // Digital Asset Links for the Android TWA (see docs/PLAYSTORE-ANDROID.md).
         .route("/.well-known/assetlinks.json", get(assetlinks))
         .nest_service("/static", tower_http::services::ServeDir::new("static"))
+        .layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            create_rate_limit,
+        ))
         .layer(axum::middleware::from_fn(security_headers))
         .with_state(app)
 }
@@ -88,6 +93,86 @@ async fn security_headers(req: Request, next: Next) -> Response {
         HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
     );
     res
+}
+
+/// `POST /create` allocates a room (memory, disk, and a per-second timer
+/// visit), so it is the one unauthenticated route that needs a hard budget.
+fn is_create_path(method: &Method, path: &str) -> bool {
+    method == Method::POST && path == "/create"
+}
+
+/// Throttle unauthenticated room creation per client address before a room is
+/// allocated. Ten creations a minute is far more than a human needs and cheap
+/// to enforce; a flood is refused with `429` and `Retry-After`.
+async fn create_rate_limit(
+    State(app): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if is_create_path(req.method(), req.uri().path()) {
+        let peer = req
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0);
+        let allowed = match client_ip(req.headers(), peer) {
+            Some(ip) => app.create_limiter.allow(ip),
+            // No trustworthy client identity (a proxy that forwards no client
+            // address). Use a much larger shared budget rather than one global
+            // 10/minute bucket that would throttle every player at once.
+            None => app.shared_create_limiter.allow_shared(),
+        };
+        if !allowed {
+            return too_many_requests(
+                "Too many rooms created. Please wait a minute and try again.",
+                "60",
+            );
+        }
+    }
+    next.run(req).await
+}
+
+fn too_many_requests(message: &str, retry_after: &'static str) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, retry_after)],
+        Html(render::error_page(message).into_string()),
+    )
+        .into_response()
+}
+
+/// Client address used for throttling.
+///
+/// Production publishes the app on loopback behind a reverse proxy (see
+/// `deploy/catan.service`), so a loopback or private peer is that proxy and the
+/// rightmost `X-Forwarded-For` entry it appended is the real client. A public
+/// peer is a direct connection, so forwarded headers are attacker-controlled
+/// and ignored. `None` means the client cannot be told apart (a trusted proxy
+/// that forwards no address), which the caller handles with a shared budget.
+fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<IpAddr> {
+    match peer {
+        Some(peer) if !is_proxy_peer(peer.ip()) => Some(peer.ip()),
+        _ => forwarded_ip(headers),
+    }
+}
+
+fn forwarded_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').find_map(|part| part.trim().parse().ok()))
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse().ok())
+        })
+}
+
+fn is_proxy_peer(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+    }
 }
 
 /// Crawler policy. Live rooms are private to the players who hold the code, so
@@ -286,6 +371,12 @@ async fn create(State(app): State<Arc<AppState>>, Form(form): Form<NameForm>) ->
             let (h, v) = set_cookie_header(&code, &token);
             ([(h, v)], Redirect::to(&format!("/room/{code}"))).into_response()
         }
+        // The room ceiling is a capacity limit, not a bad request; tell the
+        // client to back off instead of inviting an immediate retry.
+        Err(JoinError::TooManyRooms) => too_many_requests(
+            "The server is at room capacity. Please try again later.",
+            "600",
+        ),
         Err(e) => Html(render::create_page(Some(join_error(&e))).into_string()).into_response(),
     }
 }
@@ -325,6 +416,7 @@ fn join_error(e: &JoinError) -> &'static str {
         JoinError::NoName => "Please enter a name.",
         JoinError::NameTooLong => "Names can be at most 5 characters.",
         JoinError::NameTaken => "That name is already taken in this room.",
+        JoinError::TooManyRooms => "The server is at room capacity. Please try again later.",
     }
 }
 
@@ -1224,6 +1316,144 @@ mod tests {
             cookie.contains("SameSite=Lax"),
             "cross-site requests must not carry the token: {cookie}"
         );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn create_requests_are_rate_limited_per_client() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("create-rate-limit");
+        let mut allowed = 0;
+        let mut throttled = 0;
+        for _ in 0..30 {
+            let res = router(app.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/create")
+                        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                        // No ConnectInfo in a tower test, so the forwarded
+                        // address is the client key (as it is behind the proxy).
+                        .header("x-forwarded-for", "203.0.113.9")
+                        // An empty name reaches the validation page without
+                        // allocating a room, so this only exercises the limit.
+                        .body(Body::from("name=&turn_seconds=180"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if res.status() == StatusCode::TOO_MANY_REQUESTS {
+                throttled += 1;
+                assert_eq!(
+                    res.headers().get(header::RETRY_AFTER).unwrap(),
+                    "60",
+                    "a throttled client must be told when to retry"
+                );
+                assert!(
+                    body_string(res).await.contains("Too many rooms created"),
+                    "the throttle must be explained"
+                );
+            } else {
+                assert_eq!(res.status(), StatusCode::OK);
+                allowed += 1;
+            }
+        }
+        assert!(
+            (10..=12).contains(&allowed),
+            "the burst budget must allow about ten requests, got {allowed}"
+        );
+        assert!(
+            throttled >= 18,
+            "a 30-request burst must mostly be throttled, got {throttled}/30"
+        );
+
+        // A different client keeps its own budget and can still create a room.
+        let res = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/create")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .header("x-forwarded-for", "198.51.100.7")
+                    .body(Body::from("name=Zed&turn_seconds=180"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            res.status().is_redirection(),
+            "one client's flood must not block another from creating, got {}",
+            res.status()
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[test]
+    fn forwarded_addresses_are_trusted_only_from_the_proxy() {
+        use std::net::Ipv4Addr;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("198.51.100.7, 203.0.113.9"),
+        );
+
+        // A private/loopback peer is our reverse proxy: use the rightmost hop.
+        let proxy = SocketAddr::from((Ipv4Addr::LOCALHOST, 50000));
+        assert_eq!(
+            client_ip(&headers, Some(proxy)),
+            Some("203.0.113.9".parse::<IpAddr>().unwrap())
+        );
+
+        // A public peer is a direct connection: its header is spoofable.
+        let direct = SocketAddr::from((Ipv4Addr::new(8, 8, 8, 8), 50000));
+        assert_eq!(
+            client_ip(&headers, Some(direct)),
+            Some(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)))
+        );
+
+        // Without a peer (unit tests, unusual adapters) fall back to headers.
+        assert_eq!(
+            client_ip(&headers, None),
+            Some("203.0.113.9".parse::<IpAddr>().unwrap())
+        );
+
+        // A trusted proxy that forwards no address leaves the client unknown.
+        assert_eq!(client_ip(&HeaderMap::new(), Some(proxy)), None);
+    }
+
+    #[tokio::test]
+    async fn creating_at_the_room_ceiling_returns_429() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("create-room-ceiling");
+        for _ in 0..crate::state::MAX_ROOMS {
+            app.create_room("Al".into(), 180, false).unwrap();
+        }
+
+        let res = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/create")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .header("x-forwarded-for", "198.51.100.7")
+                    .body(Body::from("name=Zed&turn_seconds=180"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            res.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "a full server must refuse new rooms instead of growing without bound"
+        );
+        assert_eq!(res.headers().get(header::RETRY_AFTER).unwrap(), "600");
+        assert!(body_string(res).await.contains("room capacity"));
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
