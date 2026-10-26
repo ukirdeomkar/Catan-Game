@@ -318,7 +318,7 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
 .picker{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px}
 .trade-preview{display:flex;align-items:center;justify-content:center;gap:10px;font-size:18px;background:#00000010;border-radius:10px;padding:8px;margin-bottom:10px;min-height:44px;color:#2b2118}
 .trade-preview .arrow,.arrow{color:#8a7c66;font-size:18px}
-.btn.sheetbtn{border-radius:12px;font-weight:800;min-height:44px}
+.btn.sheetbtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:12px;font-weight:800;min-height:44px}
 .btn.sheetbtn.wide{width:100%;justify-content:center}
 .sheet-actions{display:flex;flex-direction:column;gap:8px;margin-top:8px}
 .sheet-form{display:flex;flex-direction:column;gap:8px;margin-top:8px}
