@@ -50,6 +50,7 @@ fn ic(name: &str) -> Markup {
         "dev" => r#"<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>"#,
         "check" => r#"<path d="M20 6 9 17l-5-5"/>"#,
         "x" => r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#,
+        "leave" => r#"<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>"#,
         "log" => r#"<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>"#,
         "trophy" => r#"<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>"#,
         "shield" => r#"<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>"#,
@@ -1016,7 +1017,7 @@ fn status_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> M
                 } @else {
                     button.tb-btn.tb-manage type="button" data-sheet-open="leave"
                         title=(leave_label) aria-label=(leave_label) {
-                        (ic("x"))
+                        (ic("leave"))
                         span.tb-manage-label { (leave_label) }
                     }
                 }
@@ -1062,7 +1063,7 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                     span.stat title="Knights played" { (ic("shield")) (p.played_knights) }
                     @if game.longest_road == Some(pid) { span.stat title="Longest Road" { (ic("road")) } }
                     @if game.largest_army == Some(pid) { span.stat title="Largest Army" { (ic("army")) } }
-                    @if left { span.stat.gone title="Left the game" { (ic("x")) } }
+                    @if left { span.stat.gone title="Left the game" { (ic("leave")) } }
                 }
                 @if is_turn && data.turn_seconds > 0 && data.turn_deadline_ms > 0
                     && matches!(game.phase, Phase::Play) {
@@ -1574,7 +1575,7 @@ fn manage_frag(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
                 }
                 div.sheet-actions {
                     button.btn.primary.sheetbtn.wide type="button" data-sheet-open="manage-leave" {
-                        (ic("x")) "Leave game"
+                        (ic("leave")) "Leave game"
                     }
                     button.btn.sec.sheetbtn.wide type="button" data-sheet-open="manage-players" {
                         (ic("users")) "Manage players"
@@ -1601,7 +1602,7 @@ fn manage_frag(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
                             }
                         }
                         button.btn.primary.sheetbtn.wide type="submit" {
-                            "Pass my seat to a bot"
+                            (ic("leave")) "Pass my seat to a bot"
                         }
                     }
                 } @else {
@@ -1685,14 +1686,16 @@ fn manage_frag(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
                 @if !game_over && !other_humans.is_empty() {
                     form.sheet-form data-leave="bot" hx-post=(leave_url) {
                         input type="hidden" name="mode" value="bot";
-                        button.btn.primary.sheetbtn.wide type="submit" { "Pass my seat to a bot" }
+                        button.btn.primary.sheetbtn.wide type="submit" { (ic("leave")) "Pass my seat to a bot" }
                     }
                 }
                 div.sheet-actions {
                     form.sheet-form data-leave="end" hx-post=(leave_url) {
                         input type="hidden" name="mode" value="end";
-                        button.btn.warn.sheetbtn.wide type="submit" {
-                            @if game_over { "Leave the finished game" } @else { "End game for everyone" }
+                        @if game_over {
+                            button.btn.warn.sheetbtn.wide type="submit" { (ic("leave")) "Leave the finished game" }
+                        } @else {
+                            button.btn.warn.sheetbtn.wide type="submit" { "End game for everyone" }
                         }
                     }
                     button.btn.sec.sheetbtn.wide type="button" data-sheet-close { "Cancel" }
