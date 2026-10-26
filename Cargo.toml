@@ -10,7 +10,7 @@ maud = "0.27.0"
 rand = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 tower-http = { version = "0.7.1", features = ["fs", "compression-gzip", "trace"] }
 tracing = "0.1.44"
