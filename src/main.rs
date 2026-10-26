@@ -8,9 +8,11 @@
 mod bot;
 mod game;
 mod handlers;
+mod ratelimit;
 mod render;
 mod state;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -60,7 +62,12 @@ async fn main() {
         .await
         .expect("failed to bind address");
     tracing::info!("listening on http://{addr}");
-    axum::serve(listener, handlers::router(app))
-        .await
-        .expect("server error");
+    // Carry the peer address into requests so the room-creation limiter can
+    // tell clients apart (see `handlers::client_ip`).
+    axum::serve(
+        listener,
+        handlers::router(app).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }
