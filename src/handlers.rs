@@ -1527,8 +1527,20 @@ mod tests {
             "the currently-shown move must be highlighted"
         );
         assert!(
-            body.contains(r##"hx-target="#replay-root""##),
-            "prev/next must swap the stage in place instead of reloading the page"
+            body.contains(r##"hx-target="#replay-board""##),
+            "prev/next must swap only the board, like the live game"
+        );
+        assert!(
+            body.contains(r##"hx-swap="innerHTML""##),
+            "the board wrapper must stay mounted while its contents change"
+        );
+        assert!(
+            body.contains(r#"id="replay-board""#),
+            "the replay must expose a stable board swap target"
+        );
+        assert!(
+            body.contains(r#"id="replay-list""#),
+            "the move list must stay mounted so its scroll position survives"
         );
         assert!(
             body.contains("/static/replay.js"),
@@ -1553,7 +1565,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_fragment_returns_only_the_swappable_stage() {
+    async fn replay_fragment_swaps_the_board_and_out_of_band_chrome() {
         let (app, room, code, token) = started_room("replay-hx");
         finish_room(&room);
         let mut headers = auth_headers(&code, &token);
@@ -1567,16 +1579,20 @@ mod tests {
         .await;
         let body = body_string(res).await;
         assert!(
-            body.contains(r#"id="replay-root""#),
-            "the fragment must carry the swap target"
-        );
-        assert!(
             body.contains("<svg"),
             "the fragment must still render the reconstructed board"
         );
         assert!(
-            body.contains("Move 1 / 1"),
-            "the fragment must carry the updated position"
+            body.contains(r#"data-n="1""#) && body.contains("Move 1 / 1"),
+            "the position must update out of band and carry the current move"
+        );
+        assert!(
+            body.contains(r#"hx-swap-oob="outerHTML""#) && body.contains(r#"hx-swap-oob="innerHTML""#),
+            "the chrome around the board must update out of band"
+        );
+        assert!(
+            !body.contains(r#"id="replay-root""#) && !body.contains(r#"id="replay-list""#),
+            "the fragment must leave the page layout and move list mounted"
         );
         assert!(
             !body.contains("<html") && !body.contains("htmx.min.js"),

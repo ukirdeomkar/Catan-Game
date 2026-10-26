@@ -1940,83 +1940,37 @@ fn replay_players_frag(game: &GameState, _data: &RoomData, viewer: Option<Player
     }
 }
 
-/// The swappable part of the replay page: position bar, board, side panel and
-/// move list. `game` is the board state reconstructed up to move `n`; `total`
-/// is the recorded move count.
-fn replay_root(
-    code: &str,
-    data: &RoomData,
-    game: &GameState,
-    n: usize,
-    total: usize,
-    viewer: Option<PlayerId>,
-) -> Markup {
-    let moves: &[Move] = data
-        .game
-        .as_ref()
-        .map(|g| g.moves.as_slice())
-        .unwrap_or(&[]);
-    let step = |i: usize| format!("/room/{code}/replay?n={i}");
-    let prev = n.saturating_sub(1);
-    let next = (n + 1).min(total);
-    let at_start = n == 0;
-    let at_end = n >= total;
-    let current = if n == 0 {
+/// Human-readable description of the frame at move `n`.
+fn replay_current(game: &GameState, moves: &[Move], n: usize) -> String {
+    if n == 0 {
         "Starting position".to_string()
     } else {
         moves
             .get(n - 1)
             .map(|m| format!("{} {}", game.players[m.actor].name, action_summary(&m.action)))
             .unwrap_or_default()
-    };
-    let actor_name = |idx: usize| game.players.get(idx).map(|p| p.name.clone()).unwrap_or_default();
+    }
+}
 
-    // Same shape for prev/next and the move list: fetch the frame in place,
-    // replace the stage, and keep the URL shareable/back-button friendly.
+/// Prev/next controls for the replay. They swap only the board, exactly like
+/// the live game's SSE board update, so the surrounding page never reloads.
+fn replay_nav_frag(code: &str, n: usize, total: usize) -> Markup {
+    let step = |i: usize| format!("/room/{code}/replay?n={i}");
     html! {
-        div #replay-root .replay-stage {
-            div.replay-bar {
-                a.btn.sec href=(format!("/room/{code}")) { "Back to game" }
-                h1 { "Game replay" }
-                span.muted.replay-pos { "Move " (n) " / " (total) }
+        @if n == 0 {
+            span.btn.sec.disabled { "◀ Prev" }
+        } @else {
+            a.btn.sec href=(step(n - 1)) data-replay-prev
+                hx-get=(step(n - 1)) hx-target="#replay-board" hx-swap="innerHTML" {
+                "◀ Prev"
             }
-            div.replay-main {
-                div.replay-board { (replay_board_frag(game, data, viewer)) }
-                div.card.replay-side {
-                    div.replay-now aria-live="polite" { (current) }
-                    div.replay-nav {
-                        @if at_start {
-                            span.btn.sec.disabled { "◀ Prev" }
-                        } @else {
-                            a.btn.sec href=(step(prev)) data-replay-prev
-                                hx-get=(step(prev)) hx-target="#replay-root" hx-swap="outerHTML" hx-push-url="true" {
-                                "◀ Prev"
-                            }
-                        }
-                        @if at_end {
-                            span.btn.sec.disabled { "Next ▶" }
-                        } @else {
-                            a.btn.sec href=(step(next)) data-replay-next
-                                hx-get=(step(next)) hx-target="#replay-root" hx-swap="outerHTML" hx-push-url="true" {
-                                "Next ▶"
-                            }
-                        }
-                    }
-                    (replay_players_frag(game, data, viewer))
-                    ol.replay-list {
-                        @for (i, m) in moves.iter().enumerate() {
-                            @let mark = i + 1;
-                            @let label = format!("{} {}", actor_name(m.actor), action_summary(&m.action));
-                            li.replay-item.on[mark == n] {
-                                a href=(step(mark)) data-replay-step=(mark)
-                                    hx-get=(step(mark)) hx-target="#replay-root" hx-swap="outerHTML" hx-push-url="true" {
-                                    span.replay-num { (mark) " " }
-                                    span.replay-text { (label) }
-                                }
-                            }
-                        }
-                    }
-                }
+        }
+        @if n >= total {
+            span.btn.sec.disabled { "Next ▶" }
+        } @else {
+            a.btn.sec href=(step(n + 1)) data-replay-next
+                hx-get=(step(n + 1)) hx-target="#replay-board" hx-swap="innerHTML" {
+                "Next ▶"
             }
         }
     }
@@ -2032,18 +1986,60 @@ pub fn replay_page(
     total: usize,
     viewer: Option<PlayerId>,
 ) -> Markup {
+    let moves: &[Move] = data
+        .game
+        .as_ref()
+        .map(|g| g.moves.as_slice())
+        .unwrap_or(&[]);
+    let current = replay_current(game, moves, n);
+    let step = |i: usize| format!("/room/{code}/replay?n={i}");
+    let actor_name = |idx: usize| game.players.get(idx).map(|p| p.name.clone()).unwrap_or_default();
+
+    // Everything is rendered once. Stepping replaces only `#replay-board`
+    // (the same board fragment the live game swaps) plus a few small
+    // out-of-band updates, so there is no page transition or flash.
     shell("Game replay", html! {
         div.wrap.page.replay {
-            (replay_root(code, data, game, n, total, viewer))
-            // External so the CSP (`script-src 'self'`) allows it; loaded once
-            // and left outside `#replay-root`, which htmx swaps.
+            div #replay-root .replay-stage {
+                div.replay-bar {
+                    a.btn.sec href=(format!("/room/{code}")) { "Back to game" }
+                    h1 { "Game replay" }
+                    span #replay-pos .muted.replay-pos data-n=(n) { "Move " (n) " / " (total) }
+                }
+                div.replay-main {
+                    div #replay-board .replay-board { (replay_board_frag(game, data, viewer)) }
+                    div.card.replay-side {
+                        div #replay-now .replay-now aria-live="polite" { (current) }
+                        div #replay-nav .replay-nav { (replay_nav_frag(code, n, total)) }
+                        div #replay-players { (replay_players_frag(game, data, viewer)) }
+                        ol #replay-list .replay-list {
+                            @for (i, m) in moves.iter().enumerate() {
+                                @let mark = i + 1;
+                                @let label = format!("{} {}", actor_name(m.actor), action_summary(&m.action));
+                                li.replay-item.on[mark == n] data-move=(mark) {
+                                    a href=(step(mark)) data-replay-step=(mark)
+                                        hx-get=(step(mark)) hx-target="#replay-board" hx-swap="innerHTML" {
+                                        span.replay-num { (mark) " " }
+                                        span.replay-text { (label) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // External so the CSP (`script-src 'self'`) allows it.
             script src=(asset("/static/replay.js")) defer {}
         }
     })
 }
 
-/// Fragment response for htmx-driven prev/next on the replay page: just the
-/// stage, so the document and its background never unmount between frames.
+/// Frame response for htmx-driven prev/next: the rebuilt board is the main
+/// swap (into `#replay-board`, mirroring the live game's SSE board update) and
+/// the small chrome around it updates out of band. The layout, player strip
+/// and move list stay mounted, so stepping looks like a live move, not a
+/// reload. The position element carries `data-n` so replay.js can re-highlight
+/// the current move without replacing the list (which would reset its scroll).
 pub fn replay_fragment(
     code: &str,
     data: &RoomData,
@@ -2052,7 +2048,19 @@ pub fn replay_fragment(
     total: usize,
     viewer: Option<PlayerId>,
 ) -> Markup {
-    replay_root(code, data, game, n, total, viewer)
+    let moves: &[Move] = data
+        .game
+        .as_ref()
+        .map(|g| g.moves.as_slice())
+        .unwrap_or(&[]);
+    let current = replay_current(game, moves, n);
+    html! {
+        (replay_board_frag(game, data, viewer))
+        span #replay-pos .muted.replay-pos data-n=(n) hx-swap-oob="outerHTML" { "Move " (n) " / " (total) }
+        div #replay-now .replay-now aria-live="polite" hx-swap-oob="innerHTML" { (current) }
+        div #replay-nav .replay-nav hx-swap-oob="outerHTML" { (replay_nav_frag(code, n, total)) }
+        div #replay-players hx-swap-oob="innerHTML" { (replay_players_frag(game, data, viewer)) }
+    }
 }
 
 // ---------------------------------------------------------------------------
