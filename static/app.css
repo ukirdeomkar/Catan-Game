@@ -259,6 +259,7 @@ body.game #audio-toggle.off{opacity:.5}
 .roll-stage .dice-total{margin-left:6px;font-size:20px;color:#2b2118;text-shadow:none}
 .roll-go{width:100%;min-height:52px;display:flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:14px;background:#3aa35a;color:#fff;font-size:18px;font-weight:800;cursor:pointer}
 .roll-go:hover{background:#43b465}
+.roll-go[hidden]{display:none}
 .roll-go:disabled{opacity:.6;cursor:not-allowed}
 .roll-status{margin:10px 0 0;min-height:18px;font-size:13px;color:#6c6154}
 html.roll-open,body.roll-open{overflow:hidden}

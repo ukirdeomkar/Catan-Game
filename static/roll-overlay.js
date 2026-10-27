@@ -123,7 +123,9 @@
   function onUpdate() {
     guardEndTurn();
     if (!pending) return;
-    var real = document.querySelector("#turn .dock-dice[data-my-dice] .dice-real");
+    // Not `[data-my-dice]`: a 7 moves the phase to MoveRobber, where the dock
+    // still shows the dice but no longer marks the turn as Play.
+    var real = document.querySelector("#turn .dock-dice .dice-real");
     if (!real) return;
     pending = false;
     rollSentAt = 0;
@@ -138,9 +140,11 @@
     var btn = el.querySelector("[data-roll-action]");
     var status = el.querySelector("[data-roll-status]");
     var title = el.querySelector("h2");
+    var hint = el.querySelector(".roll-hint");
     if (stage) stage.innerHTML = real.innerHTML;
     if (btn) btn.hidden = true;
     if (title) title.textContent = "You rolled";
+    if (hint) hint.textContent = "Dice are in.";
     if (status) status.textContent = "Good luck!";
     window.setTimeout(function () {
       if (overlay()) close();

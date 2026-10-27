@@ -1326,6 +1326,9 @@ mod tests {
         assert!(!rolled_turn.contains(r#"data-roll-overlay"#));
         assert!(rolled_turn.contains(r#"data-end-turn"#));
         assert!(rolled_turn.contains(r#"data-my-dice"#));
+        // The overlay JS looks for `.dock-dice .dice-real` (not `data-my-dice`)
+        // because a 7 leaves the phase as MoveRobber while the dice still show.
+        assert!(rolled_turn.contains("dice-real"));
         let _ = app;
         std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
