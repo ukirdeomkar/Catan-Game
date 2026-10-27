@@ -80,24 +80,65 @@
     if (box) box.innerHTML = "";
   });
 
-  // ---- Dice roll animation -------------------------------------------------
-  var rollHoldUntil = 0;
-  document.addEventListener("click", function (e) {
-    if (e.target.closest && e.target.closest("[x-roll]")) {
-      rollHoldUntil = Date.now() + 2200;
-    }
-  });
-  function paintDice() {
-    if (Date.now() >= rollHoldUntil) return;
-    var remain = rollHoldUntil - Date.now();
-    var wraps = document.querySelectorAll(".dice-wrap");
-    for (var i = 0; i < wraps.length; i++) {
-      (function (w) {
-        w.classList.add("rolling");
-        setTimeout(function () { w.classList.remove("rolling"); }, remain + 60);
-      })(wraps[i]);
-    }
+  // ---- Dice roll reveal ----------------------------------------------------
+  // Every viewer sees the roll in the bottom-left dock. When an SSE bump brings
+  // in a new dice pair, hold the tumble face for a moment before revealing the
+  // result (CSS hides `.dice-real` while `.rolling`). Keying on the pair keeps
+  // consecutive rolls with the same total animating. Bot rolls already tumble
+  // in place and the roller is watching the dialog, so both are left alone.
+  var DICE_REVEAL_MS = 900;
+  var diceSeen = null;
+  var dicePrimed = false;
+  var diceRevealUntil = 0;
+  var diceTimer = 0;
+
+  function dockDiceWrap() {
+    return document.querySelector("#turn .dock-dice .dice-wrap");
   }
+  function rollDialogOpen() {
+    var el = document.querySelector("#roll-root [data-roll-overlay], #turn [data-roll-overlay]");
+    return !!(el && !el.hidden);
+  }
+  function holdDice(wrap) {
+    window.clearTimeout(diceTimer);
+    diceRevealUntil = Date.now() + DICE_REVEAL_MS;
+    wrap.classList.add("rolling");
+    diceTimer = window.setTimeout(function () {
+      diceRevealUntil = 0;
+      var w = dockDiceWrap();
+      if (w) w.classList.remove("rolling");
+    }, DICE_REVEAL_MS + 40);
+  }
+  function syncDice() {
+    var wrap = dockDiceWrap();
+    var pair = wrap ? wrap.getAttribute("title") || null : null;
+    if (!dicePrimed) {
+      // Seed from the loaded page so a refresh mid-game does not tumble.
+      dicePrimed = true;
+      diceSeen = pair;
+      return;
+    }
+    if (!wrap) {
+      diceSeen = null;
+      return;
+    }
+    if (!pair || pair.indexOf("+") < 0) {
+      // `—` (no roll yet) or the bot's "Rolling…" placeholder.
+      diceSeen = pair;
+      return;
+    }
+    if (pair === diceSeen) {
+      // A re-render inside the reveal window can drop the class; put it back.
+      if (Date.now() < diceRevealUntil) wrap.classList.add("rolling");
+      return;
+    }
+    var prev = diceSeen;
+    diceSeen = pair;
+    diceRevealUntil = 0;
+    if (prev === "Rolling…" || rollDialogOpen()) return;
+    holdDice(wrap);
+  }
+  syncDice();
 
   // ---- Log-derived notifications ------------------------------------------
   var logInit = false;
@@ -130,8 +171,8 @@
     }
   }
 
-  document.addEventListener("htmx:afterSwap", function () { paintDice(); checkLog(); });
-  document.addEventListener("htmx:sseMessage", function () { paintDice(); checkLog(); });
+  document.addEventListener("htmx:afterSwap", function () { syncDice(); checkLog(); });
+  document.addEventListener("htmx:sseMessage", function () { syncDice(); checkLog(); });
 
   apply();
 })();

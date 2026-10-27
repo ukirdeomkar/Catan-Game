@@ -1355,6 +1355,108 @@ mod tests {
         std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
 
+    /// `static/ui.js` reveals every roll in the bottom-left dock by watching for
+    /// a `.dice-wrap` whose `title` changes to a pair. That only works if the
+    /// render exposes the same pair to every viewer: no dice tile before the
+    /// roll, then the tumble faces and the result together.
+    #[test]
+    fn dock_exposes_the_dice_pair_to_every_viewer() {
+        let app = test_app("dock-reveal");
+        let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        app.start_game(&room, &alice).unwrap();
+        enter_play(&room);
+        let (alice_seat, bob_seat) = {
+            let data = room.data.lock().unwrap();
+            (
+                data.member_index(&alice).unwrap(),
+                data.member_index(&bob).unwrap(),
+            )
+        };
+
+        let (alice_before, bob_before) = {
+            let data = room.data.lock().unwrap();
+            let g = data.game.as_ref().unwrap();
+            (
+                render::fragments(g, &data, Some(alice_seat)).turn.into_string(),
+                render::fragments(g, &data, Some(bob_seat)).turn.into_string(),
+            )
+        };
+        assert!(alice_before.contains(r#"data-roll-open"#));
+        assert!(
+            !bob_before.contains("dice-wrap"),
+            "another player sees no dice tile before the roll: {bob_before}"
+        );
+
+        let (alice_after, bob_after) = {
+            let mut data = room.data.lock().unwrap();
+            data.game.as_mut().unwrap().dice = Some((3, 4));
+            let g = data.game.as_ref().unwrap();
+            (
+                render::fragments(g, &data, Some(alice_seat)).turn.into_string(),
+                render::fragments(g, &data, Some(bob_seat)).turn.into_string(),
+            )
+        };
+        for (who, turn) in [("roller", &alice_after), ("observer", &bob_after)] {
+            assert!(
+                turn.contains(r#"title="3 + 4""#),
+                "{who} must get the pair in the dock: {turn}"
+            );
+            assert!(turn.contains("dice-anim"), "{who} needs the tumble faces");
+            assert!(turn.contains("dice-real"), "{who} needs the result");
+        }
+
+        // Same total, swapped pair: the title has to change or the client would
+        // treat a consecutive roll as no update and never animate.
+        let bob_swapped = {
+            let mut data = room.data.lock().unwrap();
+            data.game.as_mut().unwrap().dice = Some((4, 3));
+            let g = data.game.as_ref().unwrap();
+            render::fragments(g, &data, Some(bob_seat)).turn.into_string()
+        };
+        assert!(bob_swapped.contains(r#"title="4 + 3""#));
+        assert!(!bob_swapped.contains(r#"title="3 + 4""#));
+
+        let _ = app;
+        std::fs::remove_dir_all(app.data_dir.clone()).ok();
+    }
+
+    /// Bots tumble in place before their result, so the client must be able to
+    /// recognise that state (`.rolling` + `title="Rolling…"`) and not re-run
+    /// the reveal on top of it.
+    #[test]
+    fn bot_roll_renders_the_tumble_placeholder_for_observers() {
+        let app = test_app("dock-bot-rolling");
+        let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        app.start_game(&room, &alice).unwrap();
+        enter_play(&room);
+
+        let turn = {
+            let mut data = room.data.lock().unwrap();
+            let bot_seat = data.members.iter().position(|m| m.is_bot).unwrap();
+            let alice_seat = data.member_index(&alice).unwrap();
+            {
+                let g = data.game.as_mut().unwrap();
+                assert!(matches!(g.phase, crate::game::state::Phase::Play));
+                g.current = bot_seat;
+                g.dice = None;
+            }
+            let g = data.game.as_ref().unwrap();
+            render::fragments(g, &data, Some(alice_seat)).turn.into_string()
+        };
+        assert!(
+            turn.contains("dice-wrap rolling"),
+            "the observer needs the bot's tumble state: {turn}"
+        );
+        assert!(turn.contains(r#"title="Rolling…""#));
+        assert!(turn.contains("dice-anim"));
+
+        let _ = app;
+        std::fs::remove_dir_all(app.data_dir.clone()).ok();
+    }
+
     async fn guide(app: &Arc<AppState>, room: &str) -> String {
         let res = how_to_play(State(app.clone()), Query(HowToPlayQuery { room: room.into() })).await;
         res.0
