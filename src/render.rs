@@ -260,6 +260,7 @@ fn head_common(title: &str) -> Markup {
             script src=(asset("/static/timer.js")) defer {}
             script src=(asset("/static/trade.js")) defer {}
             script src=(asset("/static/ui.js")) defer {}
+            script src=(asset("/static/roll-overlay.js")) defer {}
             script src=(asset("/static/discard.js")) defer {}
             script src=(asset("/static/audio.js")) defer {}
             script src=(asset("/static/pwa.js")) defer {}
@@ -955,6 +956,10 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             div #controls.ctl sse-swap="controls" { (f.controls) }
             div #trades.trades sse-swap="trades" { (f.trades) }
             div #turn.dockwrap sse-swap="turn" { (f.turn) }
+            // Stable host for the roll dialog. `roll-overlay.js` moves the
+            // dialog here when it opens so a concurrent SSE turn swap cannot
+            // tear an in-progress roll out from under the player.
+            div #roll-root.roll-root {}
             div #hand.handstrip sse-swap="hand" { (f.hand) }
             // Live-managed sheets: re-sent on every bump so the kick list
             // cannot keep showing a seat that just became a bot. The container
@@ -1223,10 +1228,23 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
     let has_dev =
         my_play && ((!game.played_dev_this_turn && !p.dev_cards.is_empty()) || has_hidden_vp);
     let rolled = game.dice.is_some();
+    let can_roll = my_play && !rolled;
 
     html! {
         div.dock data-my-turn[my_play] {
-            div.dock-dice { (dock_dice(game, data)) }
+            div.dock-dice data-my-dice[my_play && rolled] {
+                @if can_roll {
+                    // The roll lives on the left, away from End Turn on the
+                    // right. Tapping it only opens the overlay; it never posts.
+                    button.dockbtn.rollbtn type="button" data-roll-open
+                        title="Roll dice" aria-haspopup="dialog" aria-controls="roll-overlay" {
+                        (ic("dice"))
+                        span.rollbtn-label { "Roll" }
+                    }
+                } @else {
+                    (dock_dice(game, data))
+                }
+            }
             @if data.allow_pause && !data.paused {
                 button.dockbtn.pausebtn type="button" title="Pause game" aria-label="Pause game"
                     hx-post=(format!("/room/{}/pause", data.code)) { (ic("pause")) }
@@ -1240,9 +1258,7 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
                     @if mode != ViewMode::Normal {
                         button.dockbtn type="button" data-sheet-open="build" title="Build" { (ic("build")) }
                         button.dockbtn hx-post=(mode_url) hx-vals=(r#"{"mode":"normal"}"#) title="Cancel" { (ic("x")) }
-                    } @else if !rolled {
-                        button.dockbtn.primary type="button" x-roll hx-post=(url) hx-vals=(r#"{"action":"roll"}"#) { (ic("dice")) "Roll" }
-                    } @else {
+                    } @else if rolled {
                         button.dockbtn type="button" data-sheet-open="build" title="Build" { (ic("build")) }
                         @if can_trade {
                             button.dockbtn type="button" data-open-trade title="Trade" { (ic("trade")) }
@@ -1250,13 +1266,16 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
                         @if has_dev {
                             button.dockbtn type="button" data-sheet-open="dev" title="Play development card" { (ic("dev")) }
                         }
-                        button.dockbtn.end hx-post=(url) hx-vals=(r#"{"action":"end_turn"}"#) title="End turn" { (ic("play")) }
+                        button.dockbtn.end type="button" data-end-turn
+                            hx-post=(url) hx-vals=(r#"{"action":"end_turn"}"#)
+                            title="End turn" aria-label="End turn" { (ic("play")) }
                     }
                 }
             } @else if !my {
                 div.dock-wait { "Waiting…" }
             }
         }
+        (roll_overlay(game, data, Some(v)))
         (build_sheet(game, data, v, my_play))
         (dev_sheet(game, data, v, has_dev))
         @if need_steal {
@@ -1266,6 +1285,44 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
             div.sheet data-sheet="discard" data-auto {
                 div.sheet-head { h3 { "Discard" } }
                 (discard_form(game, &data.code, v, layout))
+            }
+        }
+    }
+}
+
+/// The two-step roll dialog. It is only emitted for the active player who has
+/// not rolled yet; everyone else gets an empty fragment. The dock affordance
+/// opens it, and the actual `roll` POST only exists inside it, so the End Turn
+/// button can never sit under the tap that started a roll.
+pub(crate) fn roll_overlay(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
+    let Some(v) = viewer else {
+        return Markup::default();
+    };
+    if game.current != v || !matches!(game.phase, Phase::Play) || game.dice.is_some() {
+        return Markup::default();
+    }
+    let url = format!("/room/{}/action", data.code);
+    html! {
+        div #roll-overlay.roll-overlay data-roll-overlay hidden {
+            div.roll-backdrop data-roll-close aria-hidden="true" {}
+            div.roll-card role="dialog" aria-modal="true" aria-labelledby="roll-overlay-title" {
+                button.roll-x type="button" data-roll-close title="Close" aria-label="Close roll dialog" {
+                    (ic("x"))
+                }
+                h2 #roll-overlay-title { "Your turn" }
+                p.roll-hint { "Roll the dice to start your turn." }
+                div.roll-stage {
+                    span.dice-wrap data-roll-dicewrap {
+                        (dice_anim())
+                        span.roll-placeholder data-roll-placeholder { (ic("dice")) }
+                    }
+                }
+                button.roll-go type="button" data-roll-action
+                    hx-post=(url) hx-vals=(r#"{"action":"roll"}"#) hx-swap="none" hx-disabled-elt="this" {
+                    (ic("dice"))
+                    span { "Roll dice" }
+                }
+                p.roll-status data-roll-status aria-live="polite" {}
             }
         }
     }

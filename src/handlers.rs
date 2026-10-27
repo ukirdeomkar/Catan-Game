@@ -1238,6 +1238,120 @@ mod tests {
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
+    /// Drive the game through setup so it is seat 0's play turn with no roll yet.
+    fn enter_play(room: &Arc<Room>) {
+        let mut data = room.data.lock().unwrap();
+        let g = data.game.as_mut().unwrap();
+        let mut guard = 0;
+        while matches!(g.phase, crate::game::state::Phase::Setup) {
+            guard += 1;
+            assert!(guard < 80, "setup did not finish");
+            let pid = g.current;
+            if let Some(v) = g.setup_road_from {
+                let e = g.board.vertices[v]
+                    .edges
+                    .iter()
+                    .copied()
+                    .find(|&e| g.board.edges[e].owner.is_none())
+                    .unwrap();
+                g.apply(pid, &Action::PlaceRoad { edge: e }).unwrap();
+            } else {
+                let v = (0..g.board.vertices.len())
+                    .find(|&v| g.legal_settlement_vertices(pid).contains(&v))
+                    .unwrap();
+                g.apply(pid, &Action::PlaceSettlement { vertex: v }).unwrap();
+            }
+        }
+        assert!(matches!(g.phase, crate::game::state::Phase::Play));
+        assert!(g.dice.is_none(), "the play turn starts unrolled");
+    }
+
+    #[test]
+    fn roll_overlay_is_only_for_the_active_unrolled_player() {
+        let app = test_app("roll-overlay");
+        let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        app.start_game(&room, &alice).unwrap();
+        enter_play(&room);
+        let (alice_seat, bob_seat) = {
+            let data = room.data.lock().unwrap();
+            (
+                data.member_index(&alice).unwrap(),
+                data.member_index(&bob).unwrap(),
+            )
+        };
+
+        let (alice_turn, bob_turn, alice_overlay, empty_overlay) = {
+            let data = room.data.lock().unwrap();
+            let g = data.game.as_ref().unwrap();
+            (
+                render::fragments(g, &data, Some(alice_seat)).turn.into_string(),
+                render::fragments(g, &data, Some(bob_seat)).turn.into_string(),
+                render::roll_overlay(g, &data, Some(alice_seat)).into_string(),
+                render::roll_overlay(g, &data, None).into_string(),
+            )
+        };
+        assert!(
+            alice_overlay.contains(r#"data-roll-overlay"#),
+            "the active unrolled player gets the roll dialog"
+        );
+        assert!(alice_overlay.contains(r#"aria-modal="true""#));
+        assert!(alice_overlay.contains(r#"data-roll-action"#));
+        assert!(
+            alice_turn.contains("dockbtn rollbtn") && alice_turn.contains(r#"data-roll-open"#),
+            "the dock must offer the two-step roll: {alice_turn}"
+        );
+        assert!(
+            !alice_turn.contains("x-roll"),
+            "the old one-tap roll POST must be gone"
+        );
+        assert!(
+            !bob_turn.contains(r#"data-roll-overlay"#) && !bob_turn.contains(r#"data-roll-open"#),
+            "another player must not get the roll dialog: {bob_turn}"
+        );
+        assert!(empty_overlay.is_empty(), "spectators get no dialog");
+
+        // After the roll: no dialog, the result and End Turn are in the dock.
+        let (rolled_turn, rolled_overlay) = {
+            let mut data = room.data.lock().unwrap();
+            data.game.as_mut().unwrap().dice = Some((3, 4));
+            let g = data.game.as_ref().unwrap();
+            (
+                render::fragments(g, &data, Some(alice_seat)).turn.into_string(),
+                render::roll_overlay(g, &data, Some(alice_seat)).into_string(),
+            )
+        };
+        assert!(rolled_overlay.is_empty(), "no dialog after the roll");
+        assert!(!rolled_turn.contains(r#"data-roll-overlay"#));
+        assert!(rolled_turn.contains(r#"data-end-turn"#));
+        assert!(rolled_turn.contains(r#"data-my-dice"#));
+        let _ = app;
+        std::fs::remove_dir_all(app.data_dir.clone()).ok();
+    }
+
+    #[test]
+    fn roll_overlay_never_renders_end_turn() {
+        let app = test_app("roll-overlay-end");
+        let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
+        room.data.lock().unwrap().add_bot(BotLevel::default());
+        app.start_game(&room, &alice).unwrap();
+        enter_play(&room);
+        let data = room.data.lock().unwrap();
+        let g = data.game.as_ref().unwrap();
+        let seat = data.member_index(&alice).unwrap();
+        let overlay = render::roll_overlay(g, &data, Some(seat)).into_string();
+        drop(data);
+        assert!(!overlay.contains("end_turn"), "the roll overlay must not end the turn");
+        assert!(!overlay.contains("data-end-turn"));
+        assert!(
+            overlay.contains("Roll dice"),
+            "the only action in the dialog is the roll itself"
+        );
+        let _ = app;
+        std::fs::remove_dir_all(app.data_dir.clone()).ok();
+    }
+
     async fn guide(app: &Arc<AppState>, room: &str) -> String {
         let res = how_to_play(State(app.clone()), Query(HowToPlayQuery { room: room.into() })).await;
         res.0
