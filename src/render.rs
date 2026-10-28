@@ -1303,7 +1303,7 @@ pub(crate) fn roll_overlay(game: &GameState, data: &RoomData, viewer: Option<Pla
     }
     let url = format!("/room/{}/action", data.code);
     html! {
-        div #roll-overlay.roll-overlay data-roll-overlay hidden {
+        div #roll-overlay.roll-overlay data-roll-overlay data-roll-turn=(game.turn) hidden {
             div.roll-backdrop data-roll-close aria-hidden="true" {}
             div.roll-card role="dialog" aria-modal="true" aria-labelledby="roll-overlay-title" {
                 button.roll-x type="button" data-roll-close title="Close" aria-label="Close roll dialog" {

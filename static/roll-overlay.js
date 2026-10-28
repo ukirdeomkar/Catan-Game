@@ -12,6 +12,10 @@
   var settleUntil = 0;
   var lastFocus = null;
   var timeout = 0;
+  // Turn the player dismissed the dialog on. Auto-open is once per turn, so a
+  // later SSE bump in the same turn must not pop it back up; the dock button
+  // still reopens it on demand. The key is the server-rendered `GameState.turn`.
+  var dismissedTurn = null;
 
   function overlay() {
     return document.querySelector("#roll-root [data-roll-overlay]");
@@ -22,6 +26,19 @@
   function liveOverlay() {
     var el = overlay();
     return el && !el.hidden ? el : null;
+  }
+
+  function turnKey(el) {
+    return el ? el.getAttribute("data-roll-turn") : null;
+  }
+
+  // A mandatory sheet (discard/steal) or the trade modal owns the screen right
+  // now. Do not auto-open over it; the dock Roll button remains available.
+  function screenBusy() {
+    var auto = document.querySelector(".sheet[data-auto]");
+    if (auto && !auto.hidden) return true;
+    var trade = document.getElementById("trade-modal");
+    return !!(trade && !trade.hidden);
   }
 
   function lockScroll(on) {
@@ -54,21 +71,39 @@
     if (first) first.focus();
   }
 
-  function close() {
+  function close(dismissed) {
     var el = overlay();
     if (!el) return;
+    var key = turnKey(el);
     el.hidden = true;
     lockScroll(false);
     var turn = document.getElementById("turn");
-    var duplicate = turnOverlay();
     if (turn && document.querySelector("#turn [data-roll-open]")) {
-      if (duplicate && duplicate !== el) duplicate.remove();
+      // A swap while the dialog was open left a fresh hidden copy in #turn.
+      var extras = turn.querySelectorAll("[data-roll-overlay]");
+      for (var i = 0; i < extras.length; i++) {
+        if (extras[i] !== el) extras[i].remove();
+      }
       turn.appendChild(el);
     } else if (el.parentNode) {
       el.parentNode.removeChild(el);
     }
+    if (dismissed && key !== null) dismissedTurn = key;
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
     lastFocus = null;
+  }
+
+  // The server only renders the dialog for the active, unrolled player, so its
+  // presence in #turn is the permission to open. Open it once per turn; after a
+  // dismissal for that turn, wait for the turn key to change (or a dock tap).
+  function autoOpen() {
+    if (pending || liveOverlay()) return;
+    var el = turnOverlay();
+    if (!el) return;
+    var key = turnKey(el);
+    if (key !== null && key === dismissedTurn) return;
+    if (screenBusy()) return;
+    open();
   }
 
   function startRoll(e) {
@@ -122,6 +157,7 @@
 
   function onUpdate() {
     guardEndTurn();
+    autoOpen();
     if (!pending) return;
     // Not `[data-my-dice]`: a 7 moves the phase to MoveRobber, where the dock
     // still shows the dice but no longer marks the turn as Play.
@@ -162,7 +198,7 @@
       }
       if (e.target.closest("[data-roll-close]")) {
         e.preventDefault();
-        close();
+        close(true);
         return;
       }
       if (e.target.closest("[data-roll-action]")) startRoll(e);
@@ -175,7 +211,7 @@
     if (!el) return;
     if (e.key === "Escape") {
       e.preventDefault();
-      close();
+      close(true);
       return;
     }
     if (e.key !== "Tab") return;
@@ -194,4 +230,7 @@
 
   document.addEventListener("htmx:afterSwap", onUpdate);
   document.addEventListener("htmx:sseMessage", onUpdate);
+
+  // Fresh load: if the page was served mid-turn for this player, open at once.
+  autoOpen();
 })();

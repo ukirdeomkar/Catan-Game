@@ -1282,7 +1282,7 @@ mod tests {
             )
         };
 
-        let (alice_turn, bob_turn, alice_overlay, empty_overlay) = {
+        let (alice_turn, bob_turn, alice_overlay, empty_overlay, turn_no) = {
             let data = room.data.lock().unwrap();
             let g = data.game.as_ref().unwrap();
             (
@@ -1290,6 +1290,7 @@ mod tests {
                 render::fragments(g, &data, Some(bob_seat)).turn.into_string(),
                 render::roll_overlay(g, &data, Some(alice_seat)).into_string(),
                 render::roll_overlay(g, &data, None).into_string(),
+                g.turn,
             )
         };
         assert!(
@@ -1298,6 +1299,17 @@ mod tests {
         );
         assert!(alice_overlay.contains(r#"aria-modal="true""#));
         assert!(alice_overlay.contains(r#"data-roll-action"#));
+        // The client auto-opens once per turn and remembers a dismissal by this
+        // key, so the dialog must carry the current game turn.
+        let turn_key = format!(r#"data-roll-turn="{turn_no}""#);
+        assert!(
+            alice_overlay.contains(&turn_key),
+            "the dialog must expose the game turn as its auto-open key: {alice_overlay}"
+        );
+        assert!(
+            alice_turn.contains(&turn_key),
+            "the swapped-in turn fragment must carry the same turn key: {alice_turn}"
+        );
         assert!(
             alice_turn.contains("dockbtn rollbtn") && alice_turn.contains(r#"data-roll-open"#),
             "the dock must offer the two-step roll: {alice_turn}"
@@ -1329,6 +1341,51 @@ mod tests {
         // The overlay JS looks for `.dock-dice .dice-real` (not `data-my-dice`)
         // because a 7 leaves the phase as MoveRobber while the dice still show.
         assert!(rolled_turn.contains("dice-real"));
+        let _ = app;
+        std::fs::remove_dir_all(app.data_dir.clone()).ok();
+    }
+
+    #[test]
+    fn roll_overlay_turn_key_advances_with_the_turn() {
+        let app = test_app("roll-overlay-turn");
+        let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let (_, bob) = app.join(&code, "Bob".into()).unwrap();
+        app.start_game(&room, &alice).unwrap();
+        enter_play(&room);
+        let (alice_seat, bob_seat) = {
+            let data = room.data.lock().unwrap();
+            (
+                data.member_index(&alice).unwrap(),
+                data.member_index(&bob).unwrap(),
+            )
+        };
+        {
+            let mut data = room.data.lock().unwrap();
+            data.game.as_mut().unwrap().turn = 7;
+        }
+        {
+            let data = room.data.lock().unwrap();
+            let g = data.game.as_ref().unwrap();
+            let overlay = render::roll_overlay(g, &data, Some(alice_seat)).into_string();
+            assert!(
+                overlay.contains(r#"data-roll-turn="7""#),
+                "the key must mirror GameState.turn: {overlay}"
+            );
+        }
+        {
+            let mut data = room.data.lock().unwrap();
+            data.game.as_mut().unwrap().force_end_turn();
+            let g = data.game.as_ref().unwrap();
+            // A real turn change moves the key so the client auto-opens again.
+            assert_eq!(g.turn, 8, "ending a turn advances the turn counter");
+            assert_eq!(g.current, bob_seat, "the next seat becomes active");
+            let next = render::roll_overlay(g, &data, Some(bob_seat)).into_string();
+            assert!(
+                next.contains(r#"data-roll-turn="8""#),
+                "the next player's dialog must carry the new turn: {next}"
+            );
+        }
         let _ = app;
         std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
