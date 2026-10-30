@@ -12,6 +12,10 @@
   var settleUntil = 0;
   var lastFocus = null;
   var timeout = 0;
+  // True from the moment the dice land until the result reveal auto-closes, so
+  // the "your turn is over" guard below cannot cut that ~850 ms reveal short
+  // (a 7 moves the phase to MoveRobber, where `data-my-turn` is already gone).
+  var resultHold = false;
   // Turn the player dismissed the dialog on. Auto-open is once per turn, so a
   // later SSE bump in the same turn must not pop it back up; the dock button
   // still reopens it on demand. The key is the server-rendered `GameState.turn`.
@@ -157,6 +161,18 @@
 
   function onUpdate() {
     guardEndTurn();
+    // Nothing left to roll from this tab: the roll already arrived (another
+    // tab), the turn moved on (timer expired, host action), or the game ended.
+    // The dialog is no longer ours to show, so dismiss it instead of leaving a
+    // modal (and a scroll lock) over the board.
+    if (
+      !pending &&
+      !resultHold &&
+      liveOverlay() &&
+      !document.querySelector("#turn [data-roll-open]")
+    ) {
+      close();
+    }
     autoOpen();
     if (!pending) return;
     // Not `[data-my-dice]`: a 7 moves the phase to MoveRobber, where the dock
@@ -182,7 +198,9 @@
     if (title) title.textContent = "You rolled";
     if (hint) hint.textContent = "Dice are in.";
     if (status) status.textContent = "Good luck!";
+    resultHold = true;
     window.setTimeout(function () {
+      resultHold = false;
       if (overlay()) close();
     }, 850);
   }
