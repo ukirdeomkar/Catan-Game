@@ -94,7 +94,18 @@
   document.addEventListener("htmx:afterRequest", function (e) {
     if (e.target && e.target.id === "trade-form") { clearSel(); closeModal(); }
   });
-  document.addEventListener("htmx:afterSwap", function () { refreshGiveCaps(); sync(); });
-  document.addEventListener("htmx:sseMessage", function () { refreshGiveCaps(); sync(); });
+  // One bump can swap several fragments; refresh once per frame instead of
+  // rescanning the trade sheet for every fragment.
+  var bumpQueued = false;
+  function onBump() {
+    if (bumpQueued) return;
+    bumpQueued = true;
+    requestAnimationFrame(function () {
+      bumpQueued = false;
+      refreshGiveCaps();
+      sync();
+    });
+  }
+  document.addEventListener("htmx:afterSwap", onBump);
   sync();
 })();

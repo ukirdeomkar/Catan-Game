@@ -61,7 +61,18 @@
     sync();
   });
 
-  document.addEventListener("htmx:afterSwap", function () { refreshCaps(); sync(); });
-  document.addEventListener("htmx:sseMessage", function () { refreshCaps(); sync(); });
+  // One bump can swap several fragments; refresh once per frame instead of
+  // re-reading every input for each swapped fragment.
+  var bumpQueued = false;
+  function onBump() {
+    if (bumpQueued) return;
+    bumpQueued = true;
+    requestAnimationFrame(function () {
+      bumpQueued = false;
+      refreshCaps();
+      sync();
+    });
+  }
+  document.addEventListener("htmx:afterSwap", onBump);
   sync();
 })();
