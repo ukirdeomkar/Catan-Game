@@ -41,6 +41,7 @@ pub fn router(app: Arc<AppState>) -> Router {
         .route("/room/{code}/leave", post(leave_player))
         .route("/healthz", get(|| async { "ok" }))
         .route("/robots.txt", get(robots))
+        .route("/sitemap.xml", get(sitemap))
         // Served from the root so the worker's scope covers the whole origin.
         .route("/sw.js", get(service_worker))
         // Digital Asset Links for the Android TWA (see docs/PLAYSTORE-ANDROID.md).
@@ -175,15 +176,68 @@ fn is_proxy_peer(ip: IpAddr) -> bool {
     }
 }
 
+/// Canonical public origin for absolute URLs (`robots.txt`, `/sitemap.xml`).
+///
+/// Staging runs the same binary on a different host. Absolute URLs always point
+/// at production so a crawler that finds a preview build is sent to the real
+/// site instead of a duplicate; moving to a real domain is one environment
+/// change (`CATAN_PUBLIC_URL`) rather than an edit in several files.
+fn public_base_url() -> String {
+    std::env::var("CATAN_PUBLIC_URL")
+        .ok()
+        .map(|url| url.trim().trim_end_matches('/').to_string())
+        .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+        .unwrap_or_else(|| "https://playcatanou.duckdns.org".to_string())
+}
+
 /// Crawler policy. Live rooms are private to the players who hold the code, so
-/// they are excluded; the public pages stay crawlable.
+/// they are excluded; the public pages stay crawlable. The `Sitemap:` line is
+/// how a crawler discovers `/sitemap.xml` without being told out of band.
 async fn robots() -> impl IntoResponse {
+    let body = format!(
+        "User-agent: *\nAllow: /\nDisallow: /room/\n\nSitemap: {}/sitemap.xml\n",
+        public_base_url()
+    );
     (
         [
             (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
-        "User-agent: *\nAllow: /\nDisallow: /room/\n",
+        body,
+    )
+}
+
+/// Pages worth indexing, with a relative priority. Live rooms are deliberately
+/// absent: they are private and `robots.txt` disallows them. Keep this in sync
+/// with the public (non-`/room/`) routes in `router`.
+const SITEMAP_PAGES: [(&str, &str); 5] = [
+    ("/", "1.0"),
+    ("/how-to-play", "0.8"),
+    ("/create", "0.6"),
+    ("/join", "0.6"),
+    ("/privacy", "0.3"),
+];
+
+/// `sitemap.xml` for the public pages. Absolute URLs use the same canonical
+/// origin as `robots.txt`. The one-hour cache means a content change is visible
+/// the same day while repeat crawls still hit memory instead of re-rendering.
+async fn sitemap() -> impl IntoResponse {
+    let base = public_base_url();
+    let mut xml = String::with_capacity(512);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
+    for (path, priority) in SITEMAP_PAGES {
+        xml.push_str(&format!(
+            "  <url><loc>{base}{path}</loc><priority>{priority}</priority></url>\n"
+        ));
+    }
+    xml.push_str("</urlset>\n");
+    (
+        [
+            (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        xml,
     )
 }
 
@@ -2073,6 +2127,50 @@ mod tests {
         let body = String::from_utf8(body.to_vec()).unwrap();
         assert!(body.contains("User-agent: *"), "body was {body:?}");
         assert!(body.contains("Disallow: /room/"), "private rooms stay unlisted");
+        assert!(
+            body.contains(&format!("Sitemap: {}/sitemap.xml", public_base_url())),
+            "robots.txt must advertise the sitemap, body was {body:?}"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn sitemap_lists_public_pages_with_absolute_urls() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("sitemap");
+        let res = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/sitemap.xml")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap(),
+            "application/xml; charset=utf-8"
+        );
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.starts_with("<?xml version=\"1.0\""), "body was {body:?}");
+        assert!(
+            body.contains("xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\""),
+            "sitemap must declare the sitemap protocol namespace"
+        );
+        let base = public_base_url();
+        for (path, _) in SITEMAP_PAGES {
+            assert!(
+                body.contains(&format!("<loc>{base}{path}</loc>")),
+                "missing {path} in {body:?}"
+            );
+        }
+        assert!(!body.contains("/room/"), "live rooms stay unlisted");
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 
