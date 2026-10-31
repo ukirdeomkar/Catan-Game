@@ -256,7 +256,6 @@ body.game #audio-toggle.off{opacity:.5}
 .roll-stage .dice-wrap.rolling .roll-placeholder{display:none}
 .roll-stage .die{width:46px;height:46px}
 .roll-stage .dice-real{display:inline-flex;align-items:center;gap:8px}
-.roll-stage .die,.roll-stage .dice-total{animation:diepop .34s ease-out}
 .roll-stage .dice-total{margin-left:6px;font-size:20px;color:#2b2118;text-shadow:none}
 .roll-go{width:100%;min-height:52px;display:flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:14px;background:#3aa35a;color:#fff;font-size:18px;font-weight:800;cursor:pointer}
 .roll-go:hover{background:#43b465}
