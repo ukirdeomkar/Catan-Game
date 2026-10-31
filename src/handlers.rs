@@ -2175,6 +2175,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn home_page_carries_the_search_console_verification_tag() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("gsc");
+        let res = router(app.clone())
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body.contains(
+                r#"<meta name="google-site-verification" content="9Hzo3OHl6PuuMYEbue8WOB8p4zMWHD1SA5QrVix9t2o">"#
+            ),
+            "Search Console verification tag missing from <head>"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
     async fn guide_looks_a_live_room_up_case_insensitively() {
         let app = test_app("case");
         let (room, _token) = app.create_room("Al".into(), 0, false).unwrap();

@@ -226,6 +226,12 @@ fn asset(path: &str) -> String {
     format!("{path}?v={ASSET_VERSION}")
 }
 
+/// Google Search Console ownership proof for the production origin (issue #61).
+/// Meta-tag verification is unaffected by the CSP (`script-src 'self'`), unlike
+/// an inline verification script. Keep it in place — Search Console re-checks it
+/// periodically.
+const GOOGLE_SITE_VERIFICATION: &str = "9Hzo3OHl6PuuMYEbue8WOB8p4zMWHD1SA5QrVix9t2o";
+
 fn head_common(title: &str) -> Markup {
     html! {
         head {
@@ -237,6 +243,7 @@ fn head_common(title: &str) -> Markup {
             // down-right of the finger. In a browser tab the tag is a no-op.
             meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
             meta name="theme-color" content="#1470a8";
+            meta name="google-site-verification" content=(GOOGLE_SITE_VERIFICATION);
             meta name="description" content="The classic game of Catan, now online to play with your friends.";
             meta property="og:title" content="Play Catanou";
             meta property="og:description" content="Create a room, share the code, and play Settlers of Catan with friends.";
