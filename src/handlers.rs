@@ -579,13 +579,15 @@ fn render_events(
     let mut out = Vec::new();
     let Some(game) = data.game.as_ref() else {
         // Still in the lobby: push the lobby fragment so joins/leaves show up.
+        // `started` is not sent here: nothing has started, and sending it on a
+        // join would bounce every lobby viewer through a full reload. The first
+        // game bump covers it (see the game branch below).
         push_frag(
             &mut out,
             diff,
             "lobby",
             render::lobby_frag(code, &data, token),
         );
-        push_started(&mut out, diff, code);
         return out;
     };
     let f = render::fragments(game, &data, Some(v));
