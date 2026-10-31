@@ -23,6 +23,7 @@ const SHELL = [
   "/static/timer.js",
   "/static/trade.js",
   "/static/ui.js",
+  "/static/roll-overlay.js",
   "/static/discard.js",
   "/static/audio.js",
   "/static/pwa.js",

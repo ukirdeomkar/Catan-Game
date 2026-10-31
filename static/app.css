@@ -234,6 +234,36 @@ body.game #audio-toggle.off{opacity:.5}
 @keyframes droll{0%,15.9%{opacity:1}16%,100%{opacity:0}}
 @keyframes diepop{from{transform:scale(.5) rotate(-18deg);opacity:.3}to{transform:none;opacity:1}}
 
+/* Two-step roll overlay. Tapping the dock dice only opens this; the roll POST
+   lives inside it, away from End Turn. */
+.roll-root{position:relative}
+.rollbtn{width:auto;padding:0 16px;gap:8px;background:#3aa35a;color:#fff;font-weight:800;font-size:15px}
+.rollbtn:hover{background:#43b465}
+.rollbtn-label{font-size:15px}
+.roll-overlay{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left))}
+.roll-overlay[hidden]{display:none}
+.roll-backdrop{position:absolute;inset:0;background:#06131fb8;backdrop-filter:blur(2px)}
+.roll-card{position:relative;z-index:1;width:100%;max-width:380px;max-height:calc(100dvh - 28px);overflow:auto;background:#f4ecd9;color:#2b2118;border-radius:20px;padding:22px 18px 18px;box-shadow:0 24px 70px #0009;text-align:center;animation:rollpop .18s ease}
+@keyframes rollpop{from{transform:translateY(10px) scale(.98);opacity:.4}to{transform:none;opacity:1}}
+.roll-card h2{margin:0 0 4px;font-size:22px;font-weight:900}
+.roll-hint{margin:0 0 16px;font-size:14px;color:#6c6154}
+.roll-x{position:absolute;top:10px;right:10px;width:36px;height:36px;border:0;border-radius:10px;background:#00000012;color:#2b2118;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.roll-x:hover{background:#00000022}
+.roll-stage{min-height:76px;display:flex;align-items:center;justify-content:center;gap:10px;margin:0 0 16px}
+.roll-stage .roll-placeholder .ic{width:48px;height:48px;color:#8a7a5c}
+.roll-stage .dice-anim{width:54px;height:54px}
+.roll-stage .dice-anim svg{width:54px;height:54px}
+.roll-stage .dice-wrap.rolling .roll-placeholder{display:none}
+.roll-stage .die{width:46px;height:46px}
+.roll-stage .dice-real{display:inline-flex;align-items:center;gap:8px}
+.roll-stage .dice-total{margin-left:6px;font-size:20px;color:#2b2118;text-shadow:none}
+.roll-go{width:100%;min-height:52px;display:flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:14px;background:#3aa35a;color:#fff;font-size:18px;font-weight:800;cursor:pointer}
+.roll-go:hover{background:#43b465}
+.roll-go[hidden]{display:none}
+.roll-go:disabled{opacity:.6;cursor:not-allowed}
+.roll-status{margin:10px 0 0;min-height:18px;font-size:13px;color:#6c6154}
+html.roll-open,body.roll-open{overflow:hidden}
+
 /* Hand strip */
 .handstrip{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 8px;overflow-x:auto;background:#0a3e63aa;border-top:1px solid #ffffff1c}
 .gamefoot{flex:0 0 auto;text-align:center;font-size:10px;line-height:1.3;color:#cfe3f0;opacity:.75;background:#0a3e63aa;padding:3px 8px 4px}
