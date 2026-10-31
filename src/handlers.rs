@@ -1364,6 +1364,20 @@ mod tests {
         assert_eq!(diff.changed("board", maud::html! { p { "same" } }), None);
     }
 
+    #[test]
+    fn fragment_diff_keeps_the_start_redirect_once_per_stream() {
+        let mut diff = FragmentDiff::default();
+        assert_eq!(
+            diff.changed_body("started", "/room/ABCD".to_string()),
+            Some("/room/ABCD".to_string())
+        );
+        assert_eq!(
+            diff.changed_body("started", "/room/ABCD".to_string()),
+            None,
+            "a game bump must not re-send the redirect an already-navigated viewer has"
+        );
+    }
+
     /// Drive the game through setup so it is seat 0's play turn with no roll yet.
     fn enter_play(room: &Arc<Room>) {
         let mut data = room.data.lock().unwrap();
