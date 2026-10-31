@@ -522,16 +522,29 @@ struct FragmentDiff {
 impl FragmentDiff {
     /// Returns the body to send, or `None` when this viewer already has it.
     fn changed(&mut self, name: &'static str, markup: maud::Markup) -> Option<String> {
+        self.changed_body(name, markup.into_string())
+    }
+
+    /// Same, for bodies that are not maud markup (the `started` redirect URL).
+    fn changed_body(&mut self, name: &'static str, body: String) -> Option<String> {
         // An SSE event with an empty data buffer is never dispatched by the
         // browser, so an empty fragment (e.g. no active trade) would leave the
         // target stale. Send a single space instead so the swap still happens.
-        let body = markup.into_string();
         let body = if body.is_empty() { " ".to_string() } else { body };
         if self.sent.get(name).is_some_and(|last| last == &body) {
             return None;
         }
         self.sent.insert(name, body.clone());
         Some(body)
+    }
+}
+
+fn push_started(out: &mut Vec<Result<Event, Infallible>>, diff: &mut FragmentDiff, code: &str) {
+    // A lobby viewer navigates on this and cannot know it was already sent
+    // before its own connection existed, so it must survive a reconnect; the
+    // diff cache is per-connection, which gives exactly that: once per stream.
+    if let Some(body) = diff.changed_body("started", format!("/room/{code}")) {
+        out.push(Ok(Event::default().event("started").data(body)));
     }
 }
 
@@ -572,12 +585,7 @@ fn render_events(
             "lobby",
             render::lobby_frag(code, &data, token),
         );
-        // Always re-sent: a lobby viewer navigates on it, and the URL never
-        // changes, so diffing it would only mean a client that connected late
-        // never enters the game.
-        out.push(Ok(Event::default()
-            .event("started")
-            .data(format!("/room/{code}"))));
+        push_started(&mut out, diff, code);
         return out;
     };
     let f = render::fragments(game, &data, Some(v));
@@ -591,10 +599,10 @@ fn render_events(
     push_frag(&mut out, diff, "manage", f.manage);
     push_frag(&mut out, diff, "log", f.log);
     push_frag(&mut out, diff, "turn", f.turn);
-    // Any lobby viewer still waiting should drop into the game now.
-    out.push(Ok(Event::default()
-        .event("started")
-        .data(format!("/room/{code}"))));
+    // Any lobby viewer still waiting on this connection should drop into the
+    // game now; a game viewer has no `started` listener, so this costs one
+    // short event per stream.
+    push_started(&mut out, diff, code);
     out
 }
 
