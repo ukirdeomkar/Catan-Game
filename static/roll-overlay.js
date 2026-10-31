@@ -250,8 +250,19 @@
     }
   });
 
-  document.addEventListener("htmx:afterSwap", onUpdate);
-  document.addEventListener("htmx:sseMessage", onUpdate);
+  // htmx fires `htmx:afterSwap` for each swapped fragment; coalesce a whole
+  // bump into one pass so the dice/stale-dialog checks don't repeat N times.
+  var updateQueued = false;
+  function scheduleUpdate() {
+    if (updateQueued) return;
+    updateQueued = true;
+    requestAnimationFrame(function () {
+      updateQueued = false;
+      onUpdate();
+    });
+  }
+
+  document.addEventListener("htmx:afterSwap", scheduleUpdate);
 
   // Fresh load: if the page was served mid-turn for this player, open at once.
   autoOpen();

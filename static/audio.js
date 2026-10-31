@@ -352,7 +352,8 @@
     if (ctx && ctx.state === "suspended" && ctx.resume) { ctx.resume(); }
   });
 
-  document.addEventListener("htmx:sseMessage", check);
+  // htmx's SSE swap already fires `htmx:afterSwap`; listening to both ran the
+  // dice/log scan twice per fragment.
   document.addEventListener("htmx:afterSwap", check);
 
   function boot() { prev = snap(); applyToggle(); }

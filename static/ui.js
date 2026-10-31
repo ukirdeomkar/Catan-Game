@@ -67,8 +67,24 @@
     }
   });
 
-  document.addEventListener("htmx:afterSwap", apply);
-  document.addEventListener("htmx:sseMessage", apply);
+  // htmx already fires `htmx:afterSwap` for every SSE fragment swap, so the
+  // separate `htmx:sseMessage` listeners this file used to carry ran the same
+  // work a second time for every fragment. One bump can swap several
+  // fragments, so coalesce the whole batch into a single pass on the next
+  // frame instead of scanning the document once per fragment.
+  var bumpQueued = false;
+  function onBump() {
+    if (bumpQueued) return;
+    bumpQueued = true;
+    requestAnimationFrame(function () {
+      bumpQueued = false;
+      apply();
+      syncDice();
+      checkLog();
+    });
+  }
+
+  document.addEventListener("htmx:afterSwap", onBump);
 
   // ---- Error toast clearing ------------------------------------------------
   // A successful action returns `HX-Trigger-After-Swap: catan:clear-toasts`.
@@ -170,9 +186,6 @@
       if (OUTCOME.test(text)) notify(text);
     }
   }
-
-  document.addEventListener("htmx:afterSwap", function () { syncDice(); checkLog(); });
-  document.addEventListener("htmx:sseMessage", function () { syncDice(); checkLog(); });
 
   apply();
 })();

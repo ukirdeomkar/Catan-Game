@@ -15,7 +15,8 @@
     }
   }
   setInterval(tick, 500);
+  // `htmx:sseMessage` fires right after htmx's own `htmx:afterSwap` for every
+  // swapped fragment, so listening to both only doubled the work.
   document.addEventListener("htmx:afterSwap", tick);
-  document.addEventListener("htmx:sseMessage", tick);
   tick();
 })();

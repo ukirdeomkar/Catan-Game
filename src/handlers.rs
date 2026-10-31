@@ -486,9 +486,14 @@ async fn events(
     let app2 = app.clone();
     let code2 = code.clone();
     let token2 = token.clone();
+    // Per-connection record of the fragments this viewer already has. The page
+    // that opened this stream was server-rendered, but a bump can land between
+    // that render and the EventSource handshake, so the first bump sends every
+    // fragment (a full snapshot) and later bumps send only what changed.
+    let mut sent = FragmentDiff::default();
     let stream = WatchStream::new(rx)
         .map(move |_version| {
-            let events = render_events(&app2, &code2, &token2);
+            let events = render_events(&app2, &code2, &token2, &mut sent);
             futures::stream::iter(events)
         })
         .flatten();
@@ -498,7 +503,68 @@ async fn events(
         .into_response()
 }
 
-fn render_events(app: &AppState, code: &str, token: &str) -> Vec<Result<Event, Infallible>> {
+/// Per-SSE-connection record of the last HTML emitted for each fragment name.
+///
+/// Every state bump re-renders all fragments, but most of them are
+/// byte-identical to the previous bump (a bot drawing cards changes the bank
+/// counts but not the board). Sending only the changed fragments cuts the
+/// bytes per viewer and skips the htmx swap — and therefore the client
+/// re-render — for everything else.
+///
+/// The map starts empty, so the first bump after connect is always a full
+/// snapshot. That is what makes a reconnect safe: the browser may have missed
+/// any number of bumps while the stream was being re-established.
+#[derive(Default)]
+struct FragmentDiff {
+    sent: HashMap<&'static str, String>,
+}
+
+impl FragmentDiff {
+    /// Returns the body to send, or `None` when this viewer already has it.
+    fn changed(&mut self, name: &'static str, markup: maud::Markup) -> Option<String> {
+        self.changed_body(name, markup.into_string())
+    }
+
+    /// Same, for bodies that are not maud markup (the `started` redirect URL).
+    fn changed_body(&mut self, name: &'static str, body: String) -> Option<String> {
+        // An SSE event with an empty data buffer is never dispatched by the
+        // browser, so an empty fragment (e.g. no active trade) would leave the
+        // target stale. Send a single space instead so the swap still happens.
+        let body = if body.is_empty() { " ".to_string() } else { body };
+        if self.sent.get(name).is_some_and(|last| last == &body) {
+            return None;
+        }
+        self.sent.insert(name, body.clone());
+        Some(body)
+    }
+}
+
+fn push_started(out: &mut Vec<Result<Event, Infallible>>, diff: &mut FragmentDiff, code: &str) {
+    // A lobby viewer navigates on this and cannot know it was already sent
+    // before its own connection existed, so it must survive a reconnect; the
+    // diff cache is per-connection, which gives exactly that: once per stream.
+    if let Some(body) = diff.changed_body("started", format!("/room/{code}")) {
+        out.push(Ok(Event::default().event("started").data(body)));
+    }
+}
+
+fn push_frag(
+    out: &mut Vec<Result<Event, Infallible>>,
+    diff: &mut FragmentDiff,
+    name: &'static str,
+    markup: maud::Markup,
+) {
+    if let Some(body) = diff.changed(name, markup) {
+        out.push(Ok(Event::default().event(name).data(body)));
+    }
+}
+
+fn render_events(
+    app: &AppState,
+    code: &str,
+    token: &str,
+    diff: &mut FragmentDiff,
+) -> Vec<Result<Event, Infallible>> {
     let Some(room) = app.room(code) else {
         return Vec::new();
     };
@@ -510,33 +576,36 @@ fn render_events(app: &AppState, code: &str, token: &str) -> Vec<Result<Event, I
         return vec![Ok(Event::default().event("gone").data("/"))];
     };
     data.members[v].last_seen_ms = now_ms();
-    let mk = |name: &str, m: maud::Markup| {
-        // An SSE event with an empty data buffer is never dispatched by the
-        // browser, so an empty fragment (e.g. no active trade) would leave the
-        // target stale. Send a single space instead so the swap still happens.
-        let body = m.into_string();
-        let body = if body.is_empty() { " ".to_string() } else { body };
-        Ok(Event::default().event(name).data(body))
-    };
+    let mut out = Vec::new();
     let Some(game) = data.game.as_ref() else {
         // Still in the lobby: push the lobby fragment so joins/leaves show up.
-        return vec![mk("lobby", render::lobby_frag(code, &data, token))];
+        // `started` is not sent here: nothing has started, and sending it on a
+        // join would bounce every lobby viewer through a full reload. The first
+        // game bump covers it (see the game branch below).
+        push_frag(
+            &mut out,
+            diff,
+            "lobby",
+            render::lobby_frag(code, &data, token),
+        );
+        return out;
     };
     let f = render::fragments(game, &data, Some(v));
-    vec![
-        mk("status", f.status),
-        mk("board", f.board),
-        mk("players", f.players),
-        mk("hand", f.hand),
-        mk("controls", f.controls),
-        mk("trades", f.trades),
-        mk("trade_modal", f.trade_modal),
-        mk("manage", f.manage),
-        mk("log", f.log),
-        mk("turn", f.turn),
-        // Any lobby viewer still waiting should drop into the game now.
-        Ok(Event::default().event("started").data(format!("/room/{code}"))),
-    ]
+    push_frag(&mut out, diff, "status", f.status);
+    push_frag(&mut out, diff, "board", f.board);
+    push_frag(&mut out, diff, "players", f.players);
+    push_frag(&mut out, diff, "hand", f.hand);
+    push_frag(&mut out, diff, "controls", f.controls);
+    push_frag(&mut out, diff, "trades", f.trades);
+    push_frag(&mut out, diff, "trade_modal", f.trade_modal);
+    push_frag(&mut out, diff, "manage", f.manage);
+    push_frag(&mut out, diff, "log", f.log);
+    push_frag(&mut out, diff, "turn", f.turn);
+    // Any lobby viewer still waiting on this connection should drop into the
+    // game now; a game viewer has no `started` listener, so this costs one
+    // short event per stream.
+    push_started(&mut out, diff, code);
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,6 +1305,79 @@ mod tests {
             "lobby errors need a persistent #toasts target"
         );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[test]
+    fn fragment_diff_emits_a_full_snapshot_first() {
+        let mut diff = FragmentDiff::default();
+        assert_eq!(
+            diff.changed("board", maud::html! { p { "one" } }),
+            Some("<p>one</p>".to_string())
+        );
+        assert_eq!(
+            diff.changed("turn", maud::html! { p { "two" } }),
+            Some("<p>two</p>".to_string())
+        );
+    }
+
+    #[test]
+    fn fragment_diff_suppresses_an_unchanged_fragment() {
+        let mut diff = FragmentDiff::default();
+        assert!(diff.changed("board", maud::html! { p { "one" } }).is_some());
+        assert_eq!(
+            diff.changed("board", maud::html! { p { "one" } }),
+            None,
+            "a bump that leaves the board alone must not re-send it"
+        );
+        assert_eq!(
+            diff.changed("board", maud::html! { p { "two" } }),
+            Some("<p>two</p>".to_string())
+        );
+    }
+
+    #[test]
+    fn fragment_diff_keeps_empty_fragments_swappable() {
+        let mut diff = FragmentDiff::default();
+        assert_eq!(
+            diff.changed("trades", maud::Markup::default()),
+            Some(" ".to_string()),
+            "empty markup still needs a dispatched event so the target clears"
+        );
+        assert_eq!(diff.changed("trades", maud::Markup::default()), None);
+        assert_eq!(
+            diff.changed("trades", maud::html! { p { "trade" } }),
+            Some("<p>trade</p>".to_string())
+        );
+        assert_eq!(
+            diff.changed("trades", maud::Markup::default()),
+            Some(" ".to_string()),
+            "going back to empty must clear the previously drawn fragment"
+        );
+    }
+
+    #[test]
+    fn fragment_diff_treats_each_fragment_name_independently() {
+        let mut diff = FragmentDiff::default();
+        assert!(diff.changed("board", maud::html! { p { "same" } }).is_some());
+        assert!(
+            diff.changed("turn", maud::html! { p { "same" } }).is_some(),
+            "identical HTML under a different name is a different target"
+        );
+        assert_eq!(diff.changed("board", maud::html! { p { "same" } }), None);
+    }
+
+    #[test]
+    fn fragment_diff_keeps_the_start_redirect_once_per_stream() {
+        let mut diff = FragmentDiff::default();
+        assert_eq!(
+            diff.changed_body("started", "/room/ABCD".to_string()),
+            Some("/room/ABCD".to_string())
+        );
+        assert_eq!(
+            diff.changed_body("started", "/room/ABCD".to_string()),
+            None,
+            "a game bump must not re-send the redirect an already-navigated viewer has"
+        );
     }
 
     /// Drive the game through setup so it is seat 0's play turn with no roll yet.
