@@ -7,14 +7,18 @@
 // SSE turn swap cannot close it mid-roll; once the dice arrive it shows the
 // result and dismisses itself.
 (function () {
+  // How long the result stays up before the dialog closes itself. Long enough
+  // to read the number on a phone; a tap anywhere on the backdrop (or the ✕)
+  // still dismisses it immediately.
+  var RESULT_HOLD_MS = 2200;
   var pending = false;
   var rollSentAt = 0;
   var settleUntil = 0;
   var lastFocus = null;
   var timeout = 0;
   // True from the moment the dice land until the result reveal auto-closes, so
-  // the "your turn is over" guard below cannot cut that ~850 ms reveal short
-  // (a 7 moves the phase to MoveRobber, where `data-my-turn` is already gone).
+  // the "your turn is over" guard below cannot cut the reveal short (a 7 moves
+  // the phase to MoveRobber, where `data-my-turn` is already gone).
   var resultHold = false;
   // Turn the player dismissed the dialog on. Auto-open is once per turn, so a
   // later SSE bump in the same turn must not pop it back up; the dock button
@@ -202,7 +206,7 @@
     window.setTimeout(function () {
       resultHold = false;
       if (overlay()) close();
-    }, 850);
+    }, RESULT_HOLD_MS);
   }
 
   document.addEventListener(
