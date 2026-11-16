@@ -2,7 +2,7 @@ use crate::game::actions::Action;
 use crate::game::board::{Board, Building, Terrain};
 use crate::game::resources::{Bundle, DevCard, Resource, ResourceHand};
 use crate::game::rng::Rng64;
-use crate::game::scoring::longest_road_length;
+use crate::game::scoring::{RoadProbe, longest_road_length};
 use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerConfig, TradeResponse};
 
 fn configs(n: usize) -> Vec<PlayerConfig> {
@@ -487,6 +487,104 @@ fn longest_road_still_counts_a_run_between_two_opponent_buildings() {
         s.board.vertices[v].building = Building::Settlement;
     }
     assert_eq!(longest_road_length(&s.board, 0), 5);
+}
+
+#[test]
+fn road_probe_answers_the_same_as_a_cloned_board() {
+    let mut s = fresh(2, 39);
+    for e in s.board.edges.iter_mut() {
+        e.owner = None;
+    }
+    // A six-road ring for player 0, with one ring vertex blocked by player 1 and
+    // a short spur: exactly the shapes that make the length search interesting.
+    let verts = s.board.hexes[0].vertices;
+    let ring: Vec<usize> = (0..6)
+        .map(|i| {
+            let (a, b) = (verts[i], verts[(i + 1) % 6]);
+            s.board
+                .edges
+                .iter()
+                .position(|ed| (ed.a == a && ed.b == b) || (ed.a == b && ed.b == a))
+                .unwrap()
+        })
+        .collect();
+    for &e in &ring {
+        s.board.edges[e].owner = Some(0);
+    }
+    s.board.vertices[verts[0]].owner = Some(1);
+    s.board.vertices[verts[0]].building = Building::Settlement;
+    let spur = s.board.vertices[verts[3]]
+        .edges
+        .iter()
+        .copied()
+        .find(|e| !ring.contains(e))
+        .unwrap();
+    s.board.edges[spur].owner = Some(0);
+
+    let probe = RoadProbe::new(&s.board, 0);
+    assert_eq!(
+        probe.longest(),
+        5,
+        "the blocked ring vertex caps the run at five"
+    );
+
+    // Every edge on the board, owned or not: the probe must agree with the
+    // clone-per-candidate implementation the bot used to use.
+    for edge in 0..s.board.edges.len() {
+        let mut cloned = s.board.clone();
+        cloned.edges[edge].owner = Some(0);
+        assert_eq!(
+            probe.with_extra(edge),
+            longest_road_length(&cloned, 0),
+            "edge {edge} disagrees with the cloned board"
+        );
+    }
+}
+
+#[test]
+fn road_probe_sees_a_road_that_closes_a_ring() {
+    let mut s = fresh(2, 41);
+    for e in s.board.edges.iter_mut() {
+        e.owner = None;
+    }
+    // Five of a hex's six edges: the road is a five-long run, and the missing
+    // sixth edge would turn it into a six-long ring.
+    let verts = s.board.hexes[0].vertices;
+    let mut ring = Vec::new();
+    for i in 0..6 {
+        let (a, b) = (verts[i], verts[(i + 1) % 6]);
+        ring.push(
+            s.board
+                .edges
+                .iter()
+                .position(|ed| (ed.a == a && ed.b == b) || (ed.a == b && ed.b == a))
+                .unwrap(),
+        );
+    }
+    for &e in &ring[1..] {
+        s.board.edges[e].owner = Some(0);
+    }
+    let probe = RoadProbe::new(&s.board, 0);
+    assert_eq!(probe.longest(), 5);
+    assert_eq!(probe.with_extra(ring[0]), 6, "closing the ring adds a road");
+    // An edge in a part of the board the network does not reach cannot extend it.
+    let mut touched = vec![false; s.board.vertices.len()];
+    for e in &s.board.edges {
+        if e.owner.is_some() {
+            touched[e.a] = true;
+            touched[e.b] = true;
+        }
+    }
+    let apart = s
+        .board
+        .edges
+        .iter()
+        .position(|e| !touched[e.a] && !touched[e.b])
+        .expect("the board has edges outside this hex");
+    assert_eq!(probe.with_extra(apart), 5);
+    // Re-asking about an edge it already owns changes nothing.
+    assert_eq!(probe.with_extra(ring[1]), 5);
+    assert_eq!(s.longest_road_with_road_at(0, ring[0]), 6);
 }
 
 #[test]

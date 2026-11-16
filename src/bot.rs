@@ -13,6 +13,7 @@ use crate::game::board::{Building, PortKind};
 use crate::game::resources::{
     ALL_RESOURCES, Bundle, COST_CITY, COST_DEV, COST_ROAD, COST_SETTLEMENT, DevCard, Resource,
 };
+use crate::game::scoring::RoadProbe;
 use crate::game::state::{BotLevel, GameState, Phase, PlayerId, TradeResponse};
 
 /// Choose one legal action for `pid`, appropriate to the difficulty tier.
@@ -193,8 +194,16 @@ fn try_build(game: &GameState, pid: PlayerId, level: BotLevel) -> Option<Action>
         let free = game.free_roads_left > 0;
         if free || COST_ROAD.can_pay(&p.resources) {
             let legal = game.legal_road_edges(pid);
-            best_road(game, pid, &legal, level)
-                .map(|edge| (road_value(game, pid, edge, level), Action::BuildRoad { edge }))
+            // One probe per decision, reused for every legal candidate: scoring
+            // a road only needs the road network, not a copy of the whole game.
+            let roads = (level == BotLevel::Hard && !legal.is_empty())
+                .then(|| RoadProbe::new(&game.board, pid));
+            best_road(game, pid, &legal, level, roads.as_ref()).map(|edge| {
+                (
+                    road_value(game, pid, edge, level, roads.as_ref()),
+                    Action::BuildRoad { edge },
+                )
+            })
         } else {
             None
         }
@@ -506,7 +515,13 @@ fn road_potential(game: &GameState, v: usize) -> i32 {
         .count() as i32
 }
 
-fn road_value(game: &GameState, pid: PlayerId, edge: usize, level: BotLevel) -> i32 {
+fn road_value(
+    game: &GameState,
+    pid: PlayerId,
+    edge: usize,
+    level: BotLevel,
+    roads: Option<&RoadProbe<'_>>,
+) -> i32 {
     let ed = &game.board.edges[edge];
     let mut best = 0;
     for &v in &[ed.a, ed.b] {
@@ -517,10 +532,16 @@ fn road_value(game: &GameState, pid: PlayerId, edge: usize, level: BotLevel) -> 
     let mut value = best / 2;
 
     if level == BotLevel::Hard {
-        // Reward roads that advance (or contest) Longest Road.
-        let mut probe = game.clone();
-        probe.board.edges[edge].owner = Some(pid);
-        let len = probe.longest_road_of(pid) as i32;
+        // Reward roads that advance (or contest) Longest Road. `try_build` hands
+        // the Hard tier one probe per decision; the fallback keeps a stray call
+        // correct, but it is a performance cliff, so say so in a debug build.
+        let len = match roads {
+            Some(probe) => probe.with_extra(edge),
+            None => {
+                debug_assert!(false, "hard road scoring reached road_value without a probe");
+                game.longest_road_with_road_at(pid, edge)
+            }
+        } as i32;
         value += if len >= 5 { 6 + len } else { len };
     }
     value
@@ -675,13 +696,19 @@ fn best_vertex(game: &GameState, legal: &[usize], level: BotLevel) -> Option<usi
         .max_by_key(|&v| vertex_value(game, v, level))
 }
 
-fn best_road(game: &GameState, pid: PlayerId, legal: &[usize], level: BotLevel) -> Option<usize> {
+fn best_road(
+    game: &GameState,
+    pid: PlayerId,
+    legal: &[usize],
+    level: BotLevel,
+    roads: Option<&RoadProbe<'_>>,
+) -> Option<usize> {
     match level {
         BotLevel::Easy => legal.first().copied(),
         _ => legal
             .iter()
             .copied()
-            .max_by_key(|&e| road_value(game, pid, e, level)),
+            .max_by_key(|&e| road_value(game, pid, e, level, roads)),
     }
 }
 
@@ -704,6 +731,7 @@ fn best_action(options: &[Option<(i32, Action)>]) -> Option<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::board::Board;
     use crate::game::state::{BotLevel, Color, GameState, Phase, PlayerConfig};
 
     fn bot_configs(n: usize) -> Vec<PlayerConfig> {
@@ -947,5 +975,214 @@ mod tests {
         // clearly in its favour.
         game.add_anger(1, 0);
         assert!(!evaluate_trade(&game, 1, BotLevel::Medium), "spite rejects it");
+    }
+
+    /// The pre-#60 `longest_road_length`, kept verbatim apart from its name.
+    ///
+    /// It has to live here: `scoring::longest_road_length` now delegates to
+    /// `RoadProbe`, so calling it would only compare the new code with itself.
+    /// This copy is what makes the oracle below independent.
+    fn longest_road_length_before_65(board: &Board, pid: PlayerId) -> u8 {
+        let mut incident: Vec<Vec<usize>> = vec![Vec::new(); board.vertices.len()];
+        for (ei, e) in board.edges.iter().enumerate() {
+            if e.owner == Some(pid) {
+                incident[e.a].push(ei);
+                incident[e.b].push(ei);
+            }
+        }
+
+        let blocked = |v: usize| -> bool {
+            let vt = &board.vertices[v];
+            vt.building != Building::None && vt.owner != Some(pid)
+        };
+
+        let mut best = 0u8;
+
+        fn dfs(
+            board: &Board,
+            incident: &[Vec<usize>],
+            blocked: &impl Fn(usize) -> bool,
+            start: usize,
+            vertex: usize,
+            used: &mut Vec<bool>,
+            len: u8,
+            best: &mut u8,
+            is_start: bool,
+        ) {
+            // A road that started at an opponent's building must not loop back
+            // onto it: the building breaks the road, so both of its roads cannot
+            // be part of one continuous run. (A loop among the player's own
+            // vertices still counts in full, matching the ring behaviour.)
+            if !is_start && vertex == start && blocked(start) {
+                return;
+            }
+            if len > *best {
+                *best = len;
+            }
+            // A path may not continue *through* a vertex occupied by an opponent,
+            // but such a vertex is still a legal end of the road.
+            if !is_start && blocked(vertex) {
+                return;
+            }
+            for &ei in &incident[vertex] {
+                if used[ei] {
+                    continue;
+                }
+                let e = &board.edges[ei];
+                let Some(other) = e.other(vertex) else { continue };
+                used[ei] = true;
+                dfs(board, incident, blocked, start, other, used, len + 1, best, false);
+                used[ei] = false;
+            }
+        }
+
+        let mut used = vec![false; board.edges.len()];
+        for v in 0..board.vertices.len() {
+            // Start from every vertex that touches a road of this player, even an
+            // opponent's building: a road segment may be bracketed by opponent
+            // buildings at both ends, and only starting there counts the run.
+            if incident[v].is_empty() {
+                continue;
+            }
+            dfs(
+                board,
+                &incident,
+                &blocked,
+                v,
+                v,
+                &mut used,
+                0,
+                &mut best,
+                true,
+            );
+        }
+        best
+    }
+
+    /// The clone-per-candidate implementation this replaced, kept as the oracle:
+    /// road scoring must not drift while it gets cheaper. It scores through the
+    /// pre-#60 algorithm above, never through the probe under test.
+    fn road_value_cloning(game: &GameState, pid: PlayerId, edge: usize, level: BotLevel) -> i32 {
+        let ed = &game.board.edges[edge];
+        let mut best = 0;
+        for &v in &[ed.a, ed.b] {
+            if game.board.vertices[v].building == Building::None {
+                best = best.max(vertex_value(game, v, level));
+            }
+        }
+        let mut value = best / 2;
+        if level == BotLevel::Hard {
+            let mut cloned = game.clone();
+            cloned.board.edges[edge].owner = Some(pid);
+            let len = longest_road_length_before_65(&cloned.board, pid) as i32;
+            value += if len >= 5 { 6 + len } else { len };
+        }
+        value
+    }
+
+    fn best_road_cloning(game: &GameState, pid: PlayerId, legal: &[usize]) -> Option<usize> {
+        legal
+            .iter()
+            .copied()
+            .max_by_key(|&e| road_value_cloning(game, pid, e, BotLevel::Hard))
+    }
+
+    #[test]
+    fn hard_road_scoring_matches_the_clone_per_candidate_oracle() {
+        let mut candidates = 0;
+        for seed in [1u64, 7, 42, 1234] {
+            let mut game = GameState::new_lobby(bot_configs(4), seed);
+            game.start();
+            let mut steps = 0;
+            while !game.is_over() && steps < 40_000 {
+                steps += 1;
+                let Some(pid) = pending(&game) else { break };
+                let legal = game.legal_road_edges(pid);
+                if !legal.is_empty() {
+                    let roads = RoadProbe::new(&game.board, pid);
+                    assert_eq!(
+                        roads.longest(),
+                        longest_road_length_before_65(&game.board, pid),
+                        "seed {seed} turn {}: the probe's own length drifted",
+                        game.turn
+                    );
+                    for &edge in &legal {
+                        let mut cloned = game.clone();
+                        cloned.board.edges[edge].owner = Some(pid);
+                        assert_eq!(
+                            roads.with_extra(edge),
+                            longest_road_length_before_65(&cloned.board, pid),
+                            "seed {seed} turn {}: probe disagrees on edge {edge}",
+                            game.turn
+                        );
+                        assert_eq!(
+                            road_value(&game, pid, edge, BotLevel::Hard, Some(&roads)),
+                            road_value_cloning(&game, pid, edge, BotLevel::Hard),
+                            "seed {seed} turn {}: road value drifted on edge {edge}",
+                            game.turn
+                        );
+                        candidates += 1;
+                    }
+                    assert_eq!(
+                        best_road(&game, pid, &legal, BotLevel::Hard, Some(&roads)),
+                        best_road_cloning(&game, pid, &legal),
+                        "seed {seed} turn {}: the bot would build a different road",
+                        game.turn
+                    );
+                }
+                let action = choose_action(&game, pid, BotLevel::Hard);
+                game.apply(pid, &action).unwrap();
+            }
+            assert!(game.is_over(), "seed {seed} did not finish");
+        }
+        assert!(
+            candidates > 500,
+            "the corpus should cover setup, mid and late game (got {candidates} candidates)"
+        );
+    }
+
+    /// Manual perf probe for the hard bot's road search:
+    /// `cargo test --release -- --ignored --nocapture late_game_bench`
+    ///
+    /// Before #60 the hard tier cloned the whole `GameState` once per legal road
+    /// candidate. One `RoadProbe` per decision now replaces those clones; the
+    /// chosen actions are unchanged (see the oracle test above).
+    #[test]
+    #[ignore = "manual perf probe, not a correctness test"]
+    fn late_game_bench() {
+        let mut game = GameState::new_lobby(bot_configs(4), 424242);
+        game.start();
+        while !game.is_over() && game.turn < 60 {
+            let Some(pid) = pending(&game) else { break };
+            let action = choose_action(&game, pid, BotLevel::Hard);
+            game.apply(pid, &action).unwrap();
+        }
+        // Force a mid-turn position where the widest road choice actually runs.
+        let pid = (0..game.players.len())
+            .filter(|&p| game.players[p].roads_left > 0)
+            .max_by_key(|&p| game.legal_road_edges(p).len())
+            .unwrap_or(game.current);
+        game.phase = Phase::Play;
+        game.dice = Some((3, 4));
+        game.trade = None;
+        game.played_dev_this_turn = true;
+        game.players[pid].dev_cards.clear();
+        game.players[pid].resources = crate::game::resources::ResourceHand([9, 9, 9, 9, 9]);
+        game.players[pid].roads_left = 15;
+        let legal = game.legal_road_edges(pid).len();
+
+        // Best of several batches: this box is noisy, so report the fastest.
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..5 {
+            let start = std::time::Instant::now();
+            for _ in 0..200 {
+                std::hint::black_box(choose_action(&game, pid, BotLevel::Hard));
+            }
+            best = best.min(start.elapsed() / 200);
+        }
+        eprintln!(
+            "BENCH turn={} phase={:?} legal_roads={legal} choose_action(Hard)={best:?}",
+            game.turn, game.phase
+        );
     }
 }

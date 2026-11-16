@@ -7,37 +7,103 @@ use crate::game::state::{GameState, PlayerId, WIN_VP};
 /// Opponents' settlements/cities break a road: a path may not continue through
 /// a vertex occupied by another player's building (it may still end there).
 pub fn longest_road_length(board: &Board, pid: PlayerId) -> u8 {
-    let mut incident: Vec<Vec<usize>> = vec![Vec::new(); board.vertices.len()];
-    for (ei, e) in board.edges.iter().enumerate() {
-        if e.owner == Some(pid) {
-            incident[e.a].push(ei);
-            incident[e.b].push(ei);
+    RoadProbe::new(board, pid).longest()
+}
+
+/// One player's road network, precomputed once so the same board can be asked
+/// about many hypothetical roads.
+///
+/// The bot scores every legal road candidate before building, and each score
+/// needs "how long would my longest road be if I owned this edge?". Answering
+/// that by cloning the `GameState` per candidate was the dominant hard-bot CPU
+/// cost. A probe costs two small vectors and answers every candidate without
+/// touching the state.
+pub struct RoadProbe<'a> {
+    board: &'a Board,
+    /// Edges this player already owns, indexed by vertex.
+    incident: Vec<Vec<usize>>,
+    /// A vertex occupied by someone else — a road may end there, not pass through.
+    blocked: Vec<bool>,
+}
+
+impl<'a> RoadProbe<'a> {
+    pub fn new(board: &'a Board, pid: PlayerId) -> Self {
+        let mut incident: Vec<Vec<usize>> = vec![Vec::new(); board.vertices.len()];
+        for (ei, e) in board.edges.iter().enumerate() {
+            if e.owner == Some(pid) {
+                incident[e.a].push(ei);
+                incident[e.b].push(ei);
+            }
+        }
+        let blocked = board
+            .vertices
+            .iter()
+            .map(|vt| vt.building != Building::None && vt.owner != Some(pid))
+            .collect();
+        Self {
+            board,
+            incident,
+            blocked,
         }
     }
 
-    let blocked = |v: usize| -> bool {
-        let vt = &board.vertices[v];
-        vt.building != Building::None && vt.owner != Some(pid)
-    };
+    /// The player's longest road as the board stands.
+    pub fn longest(&self) -> u8 {
+        self.length(None)
+    }
 
-    let mut best = 0u8;
+    /// The player's longest road if they also owned `edge`.
+    ///
+    /// Identical to cloning the game and setting `edges[edge].owner = Some(pid)`,
+    /// which is why the bot's road choices are unchanged.
+    pub fn with_extra(&self, edge: usize) -> u8 {
+        let e = &self.board.edges[edge];
+        // An edge the player already owns is already wired into `incident`.
+        let extra = if self.incident[e.a].contains(&edge) {
+            None
+        } else {
+            Some(edge)
+        };
+        self.length(extra)
+    }
 
+    fn length(&self, extra: Option<usize>) -> u8 {
+        let mut best = 0u8;
+        let mut used = vec![false; self.board.edges.len()];
+        for v in 0..self.board.vertices.len() {
+            // Start from every vertex that touches a road of this player, even
+            // an opponent's building: a road segment may be bracketed by
+            // opponent buildings at both ends, and only starting there counts
+            // the whole run. With a hypothetical road, its ends are starts too.
+            if self.incident[v].is_empty() && !self.touches(v, extra) {
+                continue;
+            }
+            self.dfs(v, v, &mut used, 0, &mut best, true, extra);
+        }
+        best
+    }
+
+    /// Does the hypothetical road end at `v`?
+    fn touches(&self, v: usize, extra: Option<usize>) -> bool {
+        extra.is_some_and(|e| self.board.edges[e].other(v).is_some())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn dfs(
-        board: &Board,
-        incident: &[Vec<usize>],
-        blocked: &impl Fn(usize) -> bool,
+        &self,
         start: usize,
         vertex: usize,
-        used: &mut Vec<bool>,
+        used: &mut [bool],
         len: u8,
         best: &mut u8,
         is_start: bool,
+        extra: Option<usize>,
     ) {
         // A road that started at an opponent's building must not loop back onto
         // it: the building breaks the road, so both of its roads cannot be part
         // of one continuous run. (A loop among the player's own vertices still
         // counts in full, matching the ring behaviour elsewhere.)
-        if !is_start && vertex == start && blocked(start) {
+        if !is_start && vertex == start && self.blocked[start] {
             return;
         }
         if len > *best {
@@ -45,42 +111,29 @@ pub fn longest_road_length(board: &Board, pid: PlayerId) -> u8 {
         }
         // A path may not continue *through* a vertex occupied by an opponent,
         // but such a vertex is still a legal end of the road.
-        if !is_start && blocked(vertex) {
+        if !is_start && self.blocked[vertex] {
             return;
         }
-        for &ei in &incident[vertex] {
+        for &ei in &self.incident[vertex] {
             if used[ei] {
                 continue;
             }
-            let e = &board.edges[ei];
-            let Some(other) = e.other(vertex) else { continue };
+            let Some(other) = self.board.edges[ei].other(vertex) else {
+                continue;
+            };
             used[ei] = true;
-            dfs(board, incident, blocked, start, other, used, len + 1, best, false);
+            self.dfs(start, other, used, len + 1, best, false, extra);
             used[ei] = false;
         }
-    }
-
-    let mut used = vec![false; board.edges.len()];
-    for v in 0..board.vertices.len() {
-        // Start from every vertex that touches a road of this player, even an
-        // opponent's building: a road segment may be bracketed by opponent
-        // buildings at both ends, and only starting there counts the whole run.
-        if incident[v].is_empty() {
-            continue;
+        // The hypothetical road is not in `incident`, so offer it here.
+        if let Some(ei) = extra.filter(|&e| !used[e]) {
+            if let Some(other) = self.board.edges[ei].other(vertex) {
+                used[ei] = true;
+                self.dfs(start, other, used, len + 1, best, false, extra);
+                used[ei] = false;
+            }
         }
-        dfs(
-            board,
-            &incident,
-            &blocked,
-            v,
-            v,
-            &mut used,
-            0,
-            &mut best,
-            true,
-        );
     }
-    best
 }
 
 impl GameState {
