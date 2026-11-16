@@ -2,7 +2,7 @@ use crate::game::board::Building;
 use crate::game::resources::{
     ALL_RESOURCES, COST_CITY, COST_DEV, COST_ROAD, COST_SETTLEMENT, Bundle, DevCard, Resource,
 };
-use crate::game::scoring::longest_road_length;
+use crate::game::scoring::{RoadProbe, longest_road_length};
 use crate::game::state::{GameState, Move, Phase, PlayerId, TradeOffer, TradeResponse};
 use serde::{Deserialize, Serialize};
 
@@ -989,6 +989,12 @@ impl GameState {
     /// Longest road length currently visible for a player (helper for UI/bot).
     pub fn longest_road_of(&self, pid: PlayerId) -> u8 {
         longest_road_length(&self.board, pid)
+    }
+
+    /// Longest road this player would hold with one more road on `edge`,
+    /// answered without cloning the state (bot lookahead).
+    pub fn longest_road_with_road_at(&self, pid: PlayerId, edge: usize) -> u8 {
+        RoadProbe::new(&self.board, pid).with_extra(edge)
     }
 
     // --- Legal-move enumeration (used by the web UI overrides) -----------

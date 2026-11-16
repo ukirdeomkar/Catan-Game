@@ -219,6 +219,9 @@ Implemented in `src/bot.rs` (policy) + `state.rs::tick_bots` (driver).
   - **Easy** — naive greed: expand first, cities last; no trading, no Year of Plenty/Road Building.
   - **Medium** — sound priority order (settlement → city → dev → road); uses ports, dev cards, trades.
   - **Hard** — scores every option by expected value and adds a Longest-Road lookahead.
+- The Longest-Road lookahead asks `scoring::RoadProbe` what the road would be if the bot owned
+  an edge (`with_extra(edge)`). One probe per decision — two small vectors — replaces the clone
+  of `GameState` that used to be made per legal road candidate and dominated hard-bot CPU.
 - `bot::fallback_action` guarantees a legal action if the policy ever returns one the engine
   rejects, so a bug can't wedge a room.
 - **Driver/pacing** (`state::tick_bots`, called every 700 ms from `main.rs`): one bot action per
