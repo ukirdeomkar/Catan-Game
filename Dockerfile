@@ -1,6 +1,6 @@
 # --- build stage ---
 # rust:1.99-alpine (pinned by digest; bump via Dependabot docker PRs)
-FROM rust:1.99-alpine@sha256:b1d5dd5a22a09404d3e798c0cf051b689077360374eb505fa5bb93c479693d87 AS build
+FROM rust:1.100-alpine@sha256:de1e0058543a81ed7b046629167db587c67a94bdf37cce14eb27f0ec83baaffb AS build
 RUN apk add --no-cache build-base
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
@@ -11,7 +11,7 @@ RUN cargo build --release --locked
 
 # --- runtime stage ---
 # alpine:3.20 (pinned by digest; bump via Dependabot docker PRs)
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 RUN adduser -D -u 10001 catan
 WORKDIR /app
 COPY --from=build /app/target/release/catan /app/catan
