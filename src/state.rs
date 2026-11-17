@@ -1350,15 +1350,58 @@ mod tests {
         );
     }
 
+    /// Moving the robber to a hex with no opponent buildings is a legal way to
+    /// avoid stealing entirely, so the timeout has nothing to do here.
     #[test]
-    fn an_idle_steal_choice_takes_nobody() {
-        use crate::game::board::Building;
+    fn an_idle_steal_choice_on_an_empty_hex_takes_nobody() {
         let mut data = game_room(2, 23);
         {
             let g = data.game.as_mut().unwrap();
-            // A real victim sits on hex 0, so "nobody was robbed" is a claim the
-            // test can actually contradict: a wrong forced steal would take from
-            // them.
+            g.robber_hex = 1;
+            g.current = 0;
+            g.phase = Phase::Steal { hex: 0 };
+            g.players[1].resources = crate::game::resources::ResourceHand([3, 0, 0, 0, 0]);
+        }
+        assert!(
+            data.game.as_ref().unwrap().steal_candidates(0, 0).is_empty(),
+            "the fixture must have nobody adjacent to the robber"
+        );
+        let hands: Vec<_> = data
+            .game
+            .as_ref()
+            .unwrap()
+            .players
+            .iter()
+            .map(|p| p.resources)
+            .collect();
+
+        let t0 = 6_000_000;
+        tick_room_timers(&mut data, t0);
+        assert_eq!(data.turn_deadline_ms, t0 + ROBBER_TIMEOUT_SECS * 1000);
+        tick_room_timers(&mut data, t0 + ROBBER_TIMEOUT_SECS * 1000);
+
+        let g = data.game.as_ref().unwrap();
+        assert!(
+            matches!(g.phase, Phase::Play),
+            "the steal step is over instead of blocking the table"
+        );
+        assert_eq!(
+            hands,
+            g.players.iter().map(|p| p.resources).collect::<Vec<_>>(),
+            "an empty hex steals from nobody"
+        );
+        assert!(g.log.iter().any(|l| l.text.contains("nobody was robbed")));
+    }
+
+    /// The robber may also sit next to opponents and the robber still decline to
+    /// steal (the steal sheet offers "Nobody"), so a timeout takes that same
+    /// option rather than picking a victim for the player.
+    #[test]
+    fn an_idle_steal_choice_declines_even_with_a_victim_on_the_hex() {
+        use crate::game::board::Building;
+        let mut data = game_room(2, 29);
+        {
+            let g = data.game.as_mut().unwrap();
             let v = g.board.hexes[0].vertices[0];
             g.board.vertices[v].owner = Some(1);
             g.board.vertices[v].building = Building::Settlement;
@@ -1383,22 +1426,14 @@ mod tests {
 
         let t0 = 6_000_000;
         tick_room_timers(&mut data, t0);
-        assert_eq!(data.turn_deadline_ms, t0 + ROBBER_TIMEOUT_SECS * 1000);
         tick_room_timers(&mut data, t0 + ROBBER_TIMEOUT_SECS * 1000);
 
         let g = data.game.as_ref().unwrap();
-        assert!(
-            matches!(g.phase, Phase::Play),
-            "the steal step is over instead of blocking the table"
-        );
+        assert!(matches!(g.phase, Phase::Play));
         assert_eq!(
             hands,
             g.players.iter().map(|p| p.resources).collect::<Vec<_>>(),
-            "the timed-out choice steals from nobody, so no hand may move"
-        );
-        assert!(
-            g.log.iter().any(|l| l.text.contains("nobody was robbed")),
-            "the table is told the choice was taken on the clock"
+            "the timeout declines to steal, so no hand may move"
         );
     }
 
