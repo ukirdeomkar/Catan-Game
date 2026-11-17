@@ -751,7 +751,7 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
                             // Host-only. The confirm keeps a mis-tap from
                             // throwing somebody out of a full room.
                             form.pact hx-post=(remove_url) hx-vals=(format!(r#"{{"player":"{idx}"}}"#))
-                                onsubmit="return confirm('Remove this player? Their seat is freed.')" {
+                                data-confirm="Remove this player? Their seat is freed." {
                                 button.btn.warn.tiny type="submit"
                                     title=(format!("Remove {}. Their seat is freed.", m.name)) {
                                     (ic("trash")) "Remove"
@@ -788,12 +788,12 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
                 }
                 @if next_hosts.is_empty() {
                     form.pact hx-post=(leave_url) style="margin-top:10px"
-                        onsubmit="return confirm('Close this room? No other humans are left.')" {
+                        data-confirm="Close this room? No other humans are left." {
                         button.btn.sec.tiny type="submit" title="Close this room" { (ic("x")) "Close room" }
                     }
                 } @else {
                     form.pact.leavehost hx-post=(leave_url) style="margin-top:10px"
-                        onsubmit="return confirm('Leave this room and hand the host badge to the player you picked?')" {
+                        data-confirm="Leave this room and hand the host badge to the player you picked?" {
                         label.field {
                             span { "Next host" }
                             select name="next_host" {
@@ -811,7 +811,7 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
             div.card {
                 p.muted style="margin:0" { "Waiting for the host to start…" }
                 form.pact hx-post=(leave_url)
-                    onsubmit="return confirm('Leave this room? Your seat is freed.')" {
+                    data-confirm="Leave this room? Your seat is freed." {
                     button.btn.sec.tiny type="submit" title="Leave this room" { (ic("x")) "Leave room" }
                 }
             }
@@ -1047,6 +1047,8 @@ fn status_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> M
 
 fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
     let n = game.players.len();
+    let waiter = crate::state::waiting_seat(game);
+    let deadline = crate::state::visible_deadline(data, game);
     let order: Vec<PlayerId> = match viewer {
         Some(v) => (0..n).map(|i| (v + i) % n).collect(),
         None => (0..n).collect(),
@@ -1077,8 +1079,10 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                     @if game.largest_army == Some(pid) { span.stat title="Largest Army" { (ic("army")) } }
                     @if left { span.stat.gone title="Left the game" { (ic("leave")) } }
                 }
-                @if data.turn_deadline_ms > 0 && crate::state::waiting_seat(game) == Some(pid) {
-                    span.ptimer data-deadline=(data.turn_deadline_ms) { "⏱ " span data-secs { "" } }
+                @if waiter == Some(pid) {
+                    @if let Some(dl) = deadline {
+                        span.ptimer data-deadline=(dl) { "⏱ " span data-secs { "" } }
+                    }
                 }
                 @if is_bot && matches!(game.phase, Phase::Play) {
                     @let bot_level = data.members.get(pid).map(|m| m.level).unwrap_or_default();
@@ -1289,11 +1293,14 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
         }
         @if need_discard {
             @let waiter = crate::state::waiting_seat(game);
+            @let deadline = crate::state::visible_deadline(data, game);
             div.sheet data-sheet="discard" data-auto {
                 div.sheet-head {
                     h3 { "Discard" }
-                    @if data.turn_deadline_ms > 0 && waiter == Some(v) {
-                        span.ptimer data-deadline=(data.turn_deadline_ms) { "⏱ " span data-secs { "" } }
+                    @if waiter == Some(v) {
+                        @if let Some(dl) = deadline {
+                            span.ptimer data-deadline=(dl) { "⏱ " span data-secs { "" } }
+                        }
                     }
                 }
                 @if waiter == Some(v) {
@@ -2658,7 +2665,7 @@ mod tests {
         game.players[1].resources = ResourceHand([8, 0, 0, 0, 0]);
         game.phase = Phase::Discard;
         game.pending_discards = vec![1];
-        RoomData {
+        let mut data = RoomData {
             code: "ABCD".into(),
             host_token: "t0".into(),
             members: vec![member("P0", 0), member("P1", 1)],
@@ -2674,12 +2681,19 @@ mod tests {
             paused_at_ms: 0,
             pause_deadline_ms: 0,
             pause_remaining_ms: 0,
-            turn_deadline_ms: 1_700_000_040_000,
-            turn_armed_for: 42,
+            turn_deadline_ms: 0,
+            turn_armed_for: u64::MAX,
             bot_next_ms: 0,
             bot_key: u64::MAX,
-        }
+        };
+        // Arm the clock exactly as the 1 Hz tick would, so the fixture has a
+        // deadline that genuinely belongs to the discard phase.
+        crate::state::tick_room_timers(&mut data, NOW);
+        data
     }
+
+    /// Fixed "now" for the fixtures, so deadlines are exact numbers.
+    const NOW: u64 = 1_700_000_000_000;
 
     #[test]
     fn the_discard_sheet_shows_the_clock_and_says_cards_are_random() {
@@ -2725,6 +2739,80 @@ mod tests {
         assert!(
             second.contains("the clock starts when it is your turn"),
             "and is told why there is no countdown yet"
+        );
+    }
+
+    /// The four destructive forms ask for confirmation through `data-confirm`
+    /// (handled by static/ui.js). Inline `onsubmit` is refused by the site's own
+    /// CSP, which is how these buttons used to submit with no prompt at all (#78).
+    #[test]
+    fn destructive_forms_confirm_without_inline_handlers() {
+        let data = discard_room(); // two human seats: host t0 and t1
+        let host = lobby_frag("ABCD", &data, "t0").into_string();
+        assert!(
+            host.contains("data-confirm=\"Remove this player? Their seat is freed.\""),
+            "removing a player must ask"
+        );
+        assert!(
+            host.contains("data-confirm=\"Leave this room and hand the host badge to the player you picked?\""),
+            "handing over the host badge must ask"
+        );
+        assert!(!host.contains("onsubmit"), "no inline handlers: CSP blocks them");
+
+        let guest = lobby_frag("ABCD", &data, "t1").into_string();
+        assert!(
+            guest.contains("data-confirm=\"Leave this room? Your seat is freed.\""),
+            "leaving a room must ask"
+        );
+        assert!(!guest.contains("onsubmit"));
+
+        let mut solo = data.clone();
+        solo.members.truncate(1);
+        let closing = lobby_frag("ABCD", &solo, "t0").into_string();
+        assert!(
+            closing.contains("data-confirm=\"Close this room? No other humans are left.\""),
+            "closing a room must ask"
+        );
+        assert!(!closing.contains("onsubmit"));
+    }
+
+    #[test]
+    fn a_deadline_from_the_previous_phase_is_not_shown() {
+        let mut data = discard_room();
+        {
+            // Back to an ordinary turn, then let the tick arm the turn clock.
+            let g = data.game.as_mut().unwrap();
+            g.phase = Phase::Play;
+            g.dice = Some((3, 4));
+            g.pending_discards.clear();
+        }
+        crate::state::tick_room_timers(&mut data, NOW + 10_000);
+
+        // A 7 lands: the phase becomes Discard, but the 1 Hz tick has not run
+        // yet, so `turn_deadline_ms` still holds the turn's remaining time.
+        {
+            let g = data.game.as_mut().unwrap();
+            g.phase = Phase::Discard;
+            g.pending_discards = vec![1];
+        }
+        let game = data.game.clone().unwrap();
+        let turn = fragments(&game, &data, Some(1)).turn.into_string();
+        assert!(
+            !turn.contains("data-deadline"),
+            "the sheet must not show the previous phase's clock: {turn}"
+        );
+        assert!(
+            turn.contains("discarded at random"),
+            "the hint is still correct for a discard"
+        );
+
+        // The next tick re-arms 40 s for the discard and the clock appears.
+        crate::state::tick_room_timers(&mut data, NOW + 11_000);
+        let game = data.game.clone().unwrap();
+        let turn = fragments(&game, &data, Some(1)).turn.into_string();
+        assert!(
+            turn.contains(&format!("data-deadline=\"{}\"", NOW + 11_000 + 40_000)),
+            "the discard clock appears once armed: {turn}"
         );
     }
 
