@@ -10,6 +10,7 @@
       if (!d) { out.textContent = ""; continue; }
       var left = Math.max(0, Math.ceil((d - now) / 1000));
       out.textContent = left + "s";
+      if (el.classList.contains("ptimer")) el.classList.toggle("expiring", left <= 10);
       var timer = el.querySelector(".trade-timer");
       if (timer) timer.classList.toggle("expiring", left <= 10);
     }

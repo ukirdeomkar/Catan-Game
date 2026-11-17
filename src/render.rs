@@ -1077,8 +1077,7 @@ fn players_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> 
                     @if game.largest_army == Some(pid) { span.stat title="Largest Army" { (ic("army")) } }
                     @if left { span.stat.gone title="Left the game" { (ic("leave")) } }
                 }
-                @if is_turn && data.turn_seconds > 0 && data.turn_deadline_ms > 0
-                    && matches!(game.phase, Phase::Play) {
+                @if data.turn_deadline_ms > 0 && crate::state::waiting_seat(game) == Some(pid) {
                     span.ptimer data-deadline=(data.turn_deadline_ms) { "⏱ " span data-secs { "" } }
                 }
                 @if is_bot && matches!(game.phase, Phase::Play) {
@@ -1289,8 +1288,19 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
             (steal_sheet(game, data, v))
         }
         @if need_discard {
+            @let waiter = crate::state::waiting_seat(game);
             div.sheet data-sheet="discard" data-auto {
-                div.sheet-head { h3 { "Discard" } }
+                div.sheet-head {
+                    h3 { "Discard" }
+                    @if data.turn_deadline_ms > 0 && waiter == Some(v) {
+                        span.ptimer data-deadline=(data.turn_deadline_ms) { "⏱ " span data-secs { "" } }
+                    }
+                }
+                @if waiter == Some(v) {
+                    p.sheet-hint { "If the timer runs out, cards are discarded at random." }
+                } @else {
+                    p.sheet-hint { "You can discard now — the clock starts when it is your turn." }
+                }
                 (discard_form(game, &data.code, v, layout))
             }
         }
@@ -2608,4 +2618,133 @@ fn bundle_text(b: &Bundle) -> String {
         .map(|(r, n)| format!("{n} {}", r.name()))
         .collect();
     if parts.is_empty() { "nothing".to_string() } else { parts.join(", ") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::resources::ResourceHand;
+    use crate::game::state::{Color, GameState, Phase, PlayerConfig};
+    use crate::state::{Member, RoomData};
+
+    fn member(name: &str, i: usize) -> Member {
+        Member {
+            token: format!("t{i}"),
+            name: name.into(),
+            color: Color::ALL[i],
+            is_bot: false,
+            level: BotLevel::Easy,
+            connected: true,
+            last_seen_ms: 0,
+            mode: ViewMode::Normal,
+            layout: Layout::default(),
+            left: false,
+        }
+    }
+
+    /// Two human seats, mid-game, with player 1 owing a discard and the clock
+    /// running on them (player 0 is the current player, so the timer must not sit
+    /// on their card).
+    fn discard_room() -> RoomData {
+        let configs: Vec<PlayerConfig> = (0..2)
+            .map(|i| PlayerConfig {
+                name: format!("P{i}"),
+                color: Color::ALL[i],
+                is_bot: false,
+            })
+            .collect();
+        let mut game = GameState::new_lobby(configs, 5);
+        game.start();
+        game.players[1].resources = ResourceHand([8, 0, 0, 0, 0]);
+        game.phase = Phase::Discard;
+        game.pending_discards = vec![1];
+        RoomData {
+            code: "ABCD".into(),
+            host_token: "t0".into(),
+            members: vec![member("P0", 0), member("P1", 1)],
+            game: Some(game),
+            initial_game: None,
+            started: true,
+            created_ms: 0,
+            last_activity_ms: 0,
+            turn_seconds: 180,
+            allow_pause: false,
+            paused: false,
+            paused_by: None,
+            paused_at_ms: 0,
+            pause_deadline_ms: 0,
+            pause_remaining_ms: 0,
+            turn_deadline_ms: 1_700_000_040_000,
+            turn_armed_for: 42,
+            bot_next_ms: 0,
+            bot_key: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn the_discard_sheet_shows_the_clock_and_says_cards_are_random() {
+        let data = discard_room();
+        let game = data.game.clone().unwrap();
+        let turn = fragments(&game, &data, Some(1)).turn.into_string();
+        assert!(
+            turn.contains("data-deadline=\"1700000040000\""),
+            "the discard sheet must carry the deadline: {turn}"
+        );
+        assert!(
+            turn.contains("discarded at random"),
+            "the player must know what happens when the clock runs out"
+        );
+
+        // Non-owners see nothing of it.
+        let other = fragments(&game, &data, Some(0)).turn.into_string();
+        assert!(!other.contains("data-deadline"), "only the waiter gets a clock");
+    }
+
+    #[test]
+    fn the_second_discarder_does_not_see_the_first_clock() {
+        let mut data = discard_room();
+        {
+            let g = data.game.as_mut().unwrap();
+            g.players[0].resources = ResourceHand([8, 0, 0, 0, 0]);
+            g.pending_discards = vec![1, 0];
+        }
+        let game = data.game.clone().unwrap();
+
+        let first = fragments(&game, &data, Some(1)).turn.into_string();
+        assert!(first.contains("data-deadline"), "P1 owns the running clock");
+
+        let second = fragments(&game, &data, Some(0)).turn.into_string();
+        assert!(
+            second.contains("data-sheet=\"discard\""),
+            "P0 still gets the discard sheet"
+        );
+        assert!(
+            !second.contains("data-deadline"),
+            "but not someone else's countdown"
+        );
+        assert!(
+            second.contains("the clock starts when it is your turn"),
+            "and is told why there is no countdown yet"
+        );
+    }
+
+    #[test]
+    fn the_clock_sits_on_the_waiter_not_the_current_player() {
+        let data = discard_room();
+        let game = data.game.clone().unwrap();
+        let players = fragments(&game, &data, Some(0)).players.into_string();
+        let timer = players
+            .find("data-deadline")
+            .expect("the waiting seat needs a visible clock");
+        let p0 = players.find("P0").expect("P0 card");
+        let p1 = players.find("P1").expect("P1 card");
+        assert!(
+            p1 < timer,
+            "the timer belongs on P1's card (they owe the discard)"
+        );
+        assert!(
+            !(p0 < timer && timer < p1),
+            "P0 is not the one being waited on, so no clock on their card"
+        );
+    }
 }

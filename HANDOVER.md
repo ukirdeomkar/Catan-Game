@@ -191,7 +191,13 @@ and what makes bots easy (§9). Keep it that way — put transport concerns in `
    not a read-only view. Easy to relax if desired.
 7. **2-player game** uses standard rules with 2 players (no official 2-player variant / no
    neutral-player rules).
-8. **`README.md` is user-facing; this file is dev-facing.** Keep both updated.
+8. **No phase may wait on a seat without a deadline.** `state::tick_turn_timers` arms one clock
+   for whichever phase is blocking (`waiting_seat`): ordinary turns end at `turn_seconds`, and
+   setup / discard / robber / steal get 120 / 40 / 40 / 40 s and are then taken by
+   `bot::fallback_action` (a discard is chosen at random from the hand and labelled as such).
+   A human who closes the tab must never freeze the bots, so if you add a phase that blocks on
+   one player, give it a deadline in `phase_wait` and a forced action here.
+9. **`README.md` is user-facing; this file is dev-facing.** Keep both updated.
 
 ### Toolchain gotchas encountered (so you don't re-hit them)
 - `rand` 0.10 renamed traits: implement **`TryRng`** (`Error = Infallible`), not `RngCore`.

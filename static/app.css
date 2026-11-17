@@ -296,6 +296,9 @@ html.roll-open,body.roll-open{overflow:hidden}
 @keyframes sheetup{from{transform:translateY(30px);opacity:.5}to{transform:none;opacity:1}}
 .sheet-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .sheet-head h3{margin:0;font-size:17px;font-weight:900;color:#2b2118}
+.sheet-hint{margin:0 0 8px;font-size:12px;font-weight:700;line-height:1.35;color:#7a6a55}
+.ptimer{align-self:center;background:#0d5f96;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:800;color:#fff;white-space:nowrap}
+.ptimer.expiring{background:#c0392b}
 .sheet-head .grow{flex:1}
 .sheet-close{width:34px;height:34px;border:0;border-radius:10px;background:#00000012;color:#2b2118;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .sheet-close:hover{background:#00000022}

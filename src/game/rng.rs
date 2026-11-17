@@ -17,6 +17,13 @@ impl Rng64 {
         }
     }
 
+    /// Draw in `0..n` for picks that do not need the full `rand` machinery
+    /// (e.g. which card a forced discard takes). Modulo bias is ~n/2^64, i.e.
+    /// irrelevant for hands of cards. `n` must be > 0.
+    pub fn below(&mut self, n: u64) -> u64 {
+        self.try_next_u64().unwrap_or(0) % n
+    }
+
     pub fn from_entropy() -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};
         let nanos = SystemTime::now()

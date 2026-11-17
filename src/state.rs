@@ -106,10 +106,14 @@ pub struct RoomData {
     /// clock correctly stopped.
     #[serde(default)]
     pub pause_remaining_ms: u64,
-    /// Absolute unix-ms deadline for the current turn (0 = not armed).
+    /// Absolute unix-ms deadline for the phase that is currently waiting on one
+    /// seat — the ordinary turn, a discard, a robber move, a steal or a setup
+    /// placement. (0 = not armed.)
     #[serde(skip)]
     pub turn_deadline_ms: u64,
-    /// Turn key the deadline was armed for, so the timer re-arms per turn.
+    /// Key the deadline was armed for (phase, turn, seat), so it re-arms as the
+    /// room moves on. Without a deadline outside `Phase::Play` an idle human
+    /// freezes every bot in the room (#77).
     #[serde(skip)]
     pub turn_armed_for: u64,
     /// Earliest unix-ms a bot may take its next action (pacing).
@@ -834,62 +838,163 @@ fn resume_data(data: &mut RoomData, auto: bool) -> bool {
     true
 }
 
-/// Arm/expire the per-turn timer for every room (called ~1x/second).
+/// Time an idle seat gets for a sub-step of a turn. Short, because the whole
+/// table is blocked while it waits — and the discard/robber sheets show this
+/// clock, so nobody is surprised by it.
+const DISCARD_TIMEOUT_SECS: u64 = 40;
+/// Same for picking a robber hex and a steal victim.
+const ROBBER_TIMEOUT_SECS: u64 = 40;
+/// Setup gets longer: the player may still be reading the board or the rules.
+const SETUP_TIMEOUT_SECS: u64 = 120;
+
+/// Who the game is waiting on right now, if anyone.
+///
+/// Shared with the renderer so the countdown sits on the right player's card and
+/// in the right sheet: during a discard it is the first pending discarder, not
+/// necessarily the player whose turn it is.
+pub fn waiting_seat(game: &GameState) -> Option<PlayerId> {
+    match &game.phase {
+        Phase::Lobby | Phase::GameOver => None,
+        Phase::Setup => game.setup_queue.get(game.setup_pos).copied(),
+        Phase::Discard => game.pending_discards.first().copied(),
+        Phase::Play | Phase::MoveRobber { .. } | Phase::Steal { .. } => Some(game.current),
+    }
+}
+
+/// The phase currently blocking on one seat, turned into the key the deadline is
+/// armed for, its timeout, and who owes the move.
+struct PhaseWait {
+    key: u64,
+    secs: u64,
+    actor: PlayerId,
+}
+
+fn phase_wait(data: &RoomData, game: &GameState) -> Option<PhaseWait> {
+    // A room with turn timers switched off keeps the old behaviour for ordinary
+    // turns; the sub-steps still get a deadline, because those are what can stop
+    // a whole table forever (#77).
+    let (slot, secs) = match &game.phase {
+        Phase::Lobby | Phase::GameOver => return None,
+        Phase::Play if data.turn_seconds == 0 => return None,
+        Phase::Play => (2u64, data.turn_seconds),
+        Phase::Setup => (1, SETUP_TIMEOUT_SECS),
+        Phase::Discard => (3, DISCARD_TIMEOUT_SECS),
+        Phase::MoveRobber { .. } => (4, ROBBER_TIMEOUT_SECS),
+        Phase::Steal { .. } => (5, ROBBER_TIMEOUT_SECS),
+    };
+    let actor = waiting_seat(game)?;
+    Some(PhaseWait {
+        // Phase, turn and seat: forcing a discard removes that seat from the
+        // pending list, which changes the key and arms the next one's clock.
+        key: (slot << 48) | ((game.turn as u64) << 16) | actor as u64,
+        secs,
+        actor,
+    })
+}
+
+/// What one timer tick did to a room.
+#[derive(Default)]
+struct TimerTick {
+    changed: bool,
+    ended: bool,
+    resumed: bool,
+    /// A forced action was applied, so the room must be written to disk.
+    acted: bool,
+}
+
+/// Advance one room's clock by `now` (a parameter so tests need no sleeping).
+fn tick_room_timers(data: &mut RoomData, now: u64) -> TimerTick {
+    let mut tick = TimerTick::default();
+    if data.paused {
+        // Freeze every clock; only the auto-resume cap can move a paused room.
+        if data.pause_deadline_ms > 0 && now >= data.pause_deadline_ms {
+            tick.resumed = resume_data(data, true);
+            tick.changed = tick.resumed;
+        }
+        return tick;
+    }
+
+    let wait = match data.game.as_ref() {
+        None => None,
+        Some(game) => phase_wait(data, game),
+    };
+    let Some(wait) = wait else {
+        if data.turn_armed_for != u64::MAX {
+            data.turn_deadline_ms = 0;
+            data.turn_armed_for = u64::MAX;
+            tick.changed = true;
+        }
+        return tick;
+    };
+
+    if data.turn_armed_for != wait.key {
+        data.turn_deadline_ms = now + wait.secs * 1000;
+        data.turn_armed_for = wait.key;
+        tick.changed = true;
+        return tick;
+    }
+    if now < data.turn_deadline_ms {
+        return tick;
+    }
+
+    // Time is up: take the move for that seat so the table is never blocked on
+    // one idle player. An ordinary turn keeps its force_end_turn path; the
+    // sub-steps use the same guaranteed-legal action the bot driver falls back
+    // on, so validation, logging, SSE and snapshots behave as for a human move.
+    let is_play = matches!(data.game.as_ref().map(|g| &g.phase), Some(Phase::Play));
+    if let Some(game) = data.game.as_mut() {
+        use crate::game::actions::Action;
+        let name = game.players[wait.actor].name.clone();
+        if is_play {
+            game.force_end_turn();
+        } else {
+            let action = if matches!(game.phase, Phase::Discard) {
+                // No bot-style "keep the cards I need": a seat that did not
+                // choose must not be better off than one that did.
+                let resources = game.random_discard_bundle(wait.actor);
+                game.push_log(None, format!("{name} ran out of time — cards discarded at random."));
+                Some(Action::Discard { resources })
+            } else {
+                let note = match &game.phase {
+                    Phase::Setup => "ran out of time — the piece was placed.",
+                    Phase::MoveRobber { .. } => "ran out of time — the robber moved.",
+                    Phase::Steal { .. } => "ran out of time — nobody was robbed.",
+                    _ => "ran out of time.",
+                };
+                game.push_log(None, format!("{name} {note}"));
+                bot::fallback_action(game, wait.actor)
+            };
+            // The fallback is legal by construction; a rejected action would
+            // simply re-arm and try again, never wedge the room.
+            if let Some(action) = action {
+                // A forced move is a real move: it must reach the snapshot, not
+                // only the in-memory game.
+                tick.acted = game.apply(wait.actor, &action).is_ok();
+            }
+        }
+    }
+    data.turn_deadline_ms = 0;
+    data.turn_armed_for = u64::MAX;
+    tick.changed = true;
+    tick.ended = is_play;
+    tick
+}
+
+/// Advance every room's clock. One tick a second keeps the whole table moving:
+/// ordinary turns end at `turn_seconds`, and the phases that block on a single
+/// seat (setup, discard, robber, steal) get their own shorter deadline.
 pub fn tick_turn_timers(app: &AppState) {
-    use crate::game::state::Phase;
     let now = now_ms();
     let rooms: Vec<Arc<Room>> = app.rooms.read().unwrap().values().cloned().collect();
     for room in rooms {
-        let mut changed = false;
-        let mut ended = false;
-        let mut resumed = false;
-        {
+        let tick = {
             let mut data = room.data.lock().unwrap();
-            if data.paused {
-                // Freeze the turn timer entirely; only the auto-resume cap can
-                // move a paused room forward.
-                if data.pause_deadline_ms > 0 && now >= data.pause_deadline_ms {
-                    resumed = resume_data(&mut data, true);
-                    changed = resumed;
-                }
-            } else {
-                let secs = data.turn_seconds;
-                let info = data.game.as_ref().map(|g| {
-                    (
-                        matches!(g.phase, Phase::Play),
-                        g.turn as u64 * 64 + g.current as u64,
-                    )
-                });
-                match info {
-                    Some((true, key)) if secs > 0 => {
-                        if data.turn_armed_for != key {
-                            data.turn_deadline_ms = now + secs * 1000;
-                            data.turn_armed_for = key;
-                            changed = true;
-                        } else if now >= data.turn_deadline_ms {
-                            if let Some(g) = data.game.as_mut() {
-                                g.force_end_turn();
-                            }
-                            data.turn_deadline_ms = 0;
-                            data.turn_armed_for = u64::MAX;
-                            changed = true;
-                            ended = true;
-                        }
-                    }
-                    _ => {
-                        if data.turn_armed_for != u64::MAX {
-                            data.turn_deadline_ms = 0;
-                            data.turn_armed_for = u64::MAX;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-        if changed {
+            tick_room_timers(&mut data, now)
+        };
+        if tick.changed {
             room.bump();
         }
-        if ended || resumed {
+        if tick.ended || tick.resumed || tick.acted {
             app.persist(&room);
         }
     }
@@ -1111,6 +1216,265 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("catan-state-test-{tag}"));
         let _ = std::fs::remove_dir_all(&dir);
         AppState::new(dir)
+    }
+
+    /// A started room with `players` human seats, for driving the clock.
+    fn game_room(players: usize, seed: u64) -> RoomData {
+        let mut data = room(false, false);
+        data.members = (0..players)
+            .map(|i| Member {
+                token: format!("t{i}"),
+                name: format!("P{i}"),
+                color: Color::ALL[i],
+                ..member(false)
+            })
+            .collect();
+        data.host_token = "t0".into();
+        data.game = Some(GameState::new_lobby(
+            (0..players)
+                .map(|i| PlayerConfig {
+                    name: format!("P{i}"),
+                    color: Color::ALL[i],
+                    is_bot: false,
+                })
+                .collect(),
+            seed,
+        ));
+        data.game.as_mut().unwrap().start();
+        data
+    }
+
+    #[test]
+    fn an_idle_discarder_is_forced_after_the_deadline() {
+        use crate::game::resources::ResourceHand;
+        let mut data = game_room(2, 7);
+        {
+            let g = data.game.as_mut().unwrap();
+            g.players[0].resources = ResourceHand([8, 0, 0, 0, 0]);
+            g.players[1].resources = ResourceHand([8, 0, 0, 0, 0]);
+            g.phase = Phase::Discard;
+            g.pending_discards = vec![0, 1];
+        }
+        let t0 = 1_000_000;
+
+        // The seat that owes a discard gets a 40 s clock, not an open-ended wait.
+        assert!(tick_room_timers(&mut data, t0).changed);
+        assert_eq!(data.turn_deadline_ms, t0 + DISCARD_TIMEOUT_SECS * 1000);
+        assert!(!tick_room_timers(&mut data, t0 + 39_000).changed);
+        assert_eq!(data.game.as_ref().unwrap().pending_discards, vec![0, 1]);
+
+        // Due: the idle human discards exactly half, chosen at random, and the
+        // forced move is flagged for persistence (it is a real move).
+        let forced = tick_room_timers(&mut data, t0 + 40_000);
+        assert!(forced.changed && forced.acted);
+        {
+            let g = data.game.as_ref().unwrap();
+            assert_eq!(g.pending_discards, vec![1], "only the first seat is forced");
+            assert_eq!(g.players[0].resources.total(), 4, "exactly half of eight");
+            assert!(
+                g.log
+                    .iter()
+                    .any(|l| l.text.contains("cards discarded at random")),
+                "the table must be told why cards went: {:?}",
+                g.log.iter().map(|l| &l.text).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(data.turn_deadline_ms, 0, "the clock resets for the next seat");
+
+        // The next discarder gets its own clock instead of hanging the room.
+        assert!(tick_room_timers(&mut data, t0 + 40_001).changed);
+        assert_eq!(
+            data.turn_deadline_ms,
+            t0 + 40_001 + DISCARD_TIMEOUT_SECS * 1000
+        );
+        tick_room_timers(&mut data, t0 + 80_001);
+        let g = data.game.as_ref().unwrap();
+        assert!(g.pending_discards.is_empty());
+        assert!(
+            matches!(g.phase, Phase::MoveRobber { .. }),
+            "play resumes once every discard is in"
+        );
+    }
+
+    #[test]
+    fn an_idle_robber_move_is_taken_after_the_deadline() {
+        let mut data = game_room(2, 11);
+        {
+            let g = data.game.as_mut().unwrap();
+            g.current = 0;
+            g.dice = Some((3, 4));
+            g.phase = Phase::MoveRobber { after_knight: false };
+        }
+        let t0 = 2_000_000;
+        let before = data.game.as_ref().unwrap().robber_hex;
+        tick_room_timers(&mut data, t0);
+        assert_eq!(data.turn_deadline_ms, t0 + ROBBER_TIMEOUT_SECS * 1000);
+        tick_room_timers(&mut data, t0 + ROBBER_TIMEOUT_SECS * 1000);
+        let g = data.game.as_ref().unwrap();
+        assert_ne!(g.robber_hex, before, "the robber moved for the idle seat");
+        assert!(
+            !matches!(g.phase, Phase::MoveRobber { .. }),
+            "the room left the robber step"
+        );
+        assert!(
+            g.log.iter().any(|l| l.text.contains("the robber moved")),
+            "the table is told it happened on the clock"
+        );
+    }
+
+    #[test]
+    fn an_idle_human_setup_placement_is_placed_after_the_deadline() {
+        let mut data = game_room(2, 13);
+        assert!(matches!(data.game.as_ref().unwrap().phase, Phase::Setup));
+        let t0 = 3_000_000;
+        tick_room_timers(&mut data, t0);
+        assert_eq!(data.turn_deadline_ms, t0 + SETUP_TIMEOUT_SECS * 1000);
+        tick_room_timers(&mut data, t0 + SETUP_TIMEOUT_SECS * 1000);
+        {
+            let g = data.game.as_ref().unwrap();
+            let placed = g.board.vertices.iter().filter(|v| v.owner.is_some()).count();
+            assert_eq!(placed, 1, "the first settlement was placed for the idle seat");
+            assert!(g.log.iter().any(|l| l.text.contains("the piece was placed")));
+        }
+
+        // The road that follows gets its own clock even though the phase/turn/seat
+        // key has not changed: the tick resets the key after every forced move.
+        let t1 = t0 + SETUP_TIMEOUT_SECS * 1000;
+        assert!(tick_room_timers(&mut data, t1).changed);
+        assert_eq!(data.turn_deadline_ms, t1 + SETUP_TIMEOUT_SECS * 1000);
+        tick_room_timers(&mut data, t1 + SETUP_TIMEOUT_SECS * 1000);
+        let g = data.game.as_ref().unwrap();
+        assert!(
+            g.board.edges.iter().filter(|e| e.owner.is_some()).count() == 1,
+            "the setup road was placed for the idle seat too"
+        );
+    }
+
+    /// Moving the robber to a hex with no opponent buildings is a legal way to
+    /// avoid stealing entirely, so the timeout has nothing to do here.
+    #[test]
+    fn an_idle_steal_choice_on_an_empty_hex_takes_nobody() {
+        let mut data = game_room(2, 23);
+        {
+            let g = data.game.as_mut().unwrap();
+            g.robber_hex = 1;
+            g.current = 0;
+            g.phase = Phase::Steal { hex: 0 };
+            g.players[1].resources = crate::game::resources::ResourceHand([3, 0, 0, 0, 0]);
+        }
+        assert!(
+            data.game.as_ref().unwrap().steal_candidates(0, 0).is_empty(),
+            "the fixture must have nobody adjacent to the robber"
+        );
+        let hands: Vec<_> = data
+            .game
+            .as_ref()
+            .unwrap()
+            .players
+            .iter()
+            .map(|p| p.resources)
+            .collect();
+
+        let t0 = 6_000_000;
+        tick_room_timers(&mut data, t0);
+        assert_eq!(data.turn_deadline_ms, t0 + ROBBER_TIMEOUT_SECS * 1000);
+        tick_room_timers(&mut data, t0 + ROBBER_TIMEOUT_SECS * 1000);
+
+        let g = data.game.as_ref().unwrap();
+        assert!(
+            matches!(g.phase, Phase::Play),
+            "the steal step is over instead of blocking the table"
+        );
+        assert_eq!(
+            hands,
+            g.players.iter().map(|p| p.resources).collect::<Vec<_>>(),
+            "an empty hex steals from nobody"
+        );
+        assert!(g.log.iter().any(|l| l.text.contains("nobody was robbed")));
+    }
+
+    /// The robber may also sit next to opponents and the robber still decline to
+    /// steal (the steal sheet offers "Nobody"), so a timeout takes that same
+    /// option rather than picking a victim for the player.
+    #[test]
+    fn an_idle_steal_choice_declines_even_with_a_victim_on_the_hex() {
+        use crate::game::board::Building;
+        let mut data = game_room(2, 29);
+        {
+            let g = data.game.as_mut().unwrap();
+            let v = g.board.hexes[0].vertices[0];
+            g.board.vertices[v].owner = Some(1);
+            g.board.vertices[v].building = Building::Settlement;
+            g.players[1].resources = crate::game::resources::ResourceHand([3, 0, 0, 0, 0]);
+            g.robber_hex = 1;
+            g.current = 0;
+            g.phase = Phase::Steal { hex: 0 };
+        }
+        assert_eq!(
+            data.game.as_ref().unwrap().steal_candidates(0, 0),
+            vec![1],
+            "the fixture must offer somebody to rob"
+        );
+        let hands: Vec<_> = data
+            .game
+            .as_ref()
+            .unwrap()
+            .players
+            .iter()
+            .map(|p| p.resources)
+            .collect();
+
+        let t0 = 6_000_000;
+        tick_room_timers(&mut data, t0);
+        tick_room_timers(&mut data, t0 + ROBBER_TIMEOUT_SECS * 1000);
+
+        let g = data.game.as_ref().unwrap();
+        assert!(matches!(g.phase, Phase::Play));
+        assert_eq!(
+            hands,
+            g.players.iter().map(|p| p.resources).collect::<Vec<_>>(),
+            "the timeout declines to steal, so no hand may move"
+        );
+    }
+
+    #[test]
+    fn the_turn_timer_still_ends_an_idle_turn() {
+        let mut data = game_room(2, 17);
+        {
+            let g = data.game.as_mut().unwrap();
+            g.current = 0;
+            g.dice = Some((5, 3));
+            g.phase = Phase::Play;
+        }
+        let secs = data.turn_seconds;
+        let t0 = 4_000_000;
+        tick_room_timers(&mut data, t0);
+        assert_eq!(data.turn_deadline_ms, t0 + secs * 1000);
+        let turn = data.game.as_ref().unwrap().turn;
+        tick_room_timers(&mut data, t0 + secs * 1000);
+        assert_ne!(
+            data.game.as_ref().unwrap().turn,
+            turn,
+            "an ordinary turn is still ended by its timer"
+        );
+    }
+
+    #[test]
+    fn a_paused_room_does_not_expire_phase_deadlines() {
+        let mut data = game_room(2, 19);
+        {
+            let g = data.game.as_mut().unwrap();
+            g.phase = Phase::MoveRobber { after_knight: false };
+            g.current = 0;
+        }
+        data.paused = true;
+        data.pause_deadline_ms = u64::MAX;
+        tick_room_timers(&mut data, 5_000_000);
+        assert_eq!(data.turn_deadline_ms, 0, "no clock runs while paused");
+        assert!(matches!(
+            data.game.as_ref().unwrap().phase,
+            Phase::MoveRobber { .. }
+        ));
     }
 
     #[test]
