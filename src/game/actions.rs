@@ -648,6 +648,40 @@ impl GameState {
         out
     }
 
+    /// A discard bundle picked uniformly at random from the hand.
+    ///
+    /// Used when a seat runs out of time to discard: the player did not get to
+    /// choose, so they must not get the bot's "keep my next build" advantage.
+    /// Drawing from the game's own RNG keeps the choice part of the game's
+    /// recorded history (and reproducible from a seeded state) instead of
+    /// depending on process randomness.
+    pub fn random_discard_bundle(&mut self, actor: PlayerId) -> Bundle {
+        let hand = self.players[actor].resources;
+        let required = hand.total() / 2;
+        let mut counts = [0u8; 5];
+        for _ in 0..required {
+            // Every card still in hand is equally likely, so a big stack is
+            // more likely to be hit than a single card.
+            let left: u8 = ALL_RESOURCES
+                .iter()
+                .map(|r| hand.get(*r).saturating_sub(counts[r.as_usize()]))
+                .sum();
+            if left == 0 {
+                break;
+            }
+            let mut pick = self.rng.below(left as u64) as u8;
+            for r in ALL_RESOURCES {
+                let free = hand.get(r).saturating_sub(counts[r.as_usize()]);
+                if pick < free {
+                    counts[r.as_usize()] += 1;
+                    break;
+                }
+                pick -= free;
+            }
+        }
+        Bundle(counts)
+    }
+
     fn discard(&mut self, actor: PlayerId, resources: Bundle) -> RuleResult {
         if !matches!(self.phase, Phase::Discard) {
             return Err(RuleError::new("No discards are pending"));

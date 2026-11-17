@@ -587,6 +587,47 @@ fn road_probe_sees_a_road_that_closes_a_ring() {
     assert_eq!(s.longest_road_with_road_at(0, ring[0]), 6);
 }
 
+// ---------------------------------------------------------------------------
+// Forced (timed-out) discard
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_forced_discard_takes_exactly_half_at_random() {
+    let mut s = fresh(2, 43);
+    s.players[0].resources = ResourceHand([6, 0, 0, 0, 2]);
+    let bundle = s.random_discard_bundle(0);
+    assert_eq!(bundle.total(), 4, "half of an eight-card hand");
+    assert!(
+        bundle.can_pay(&s.players[0].resources),
+        "only cards the player actually holds"
+    );
+    assert_eq!(
+        bundle.get(Resource::Brick) + bundle.get(Resource::Wheat) + bundle.get(Resource::Ore),
+        0,
+        "nothing from a resource they do not hold"
+    );
+
+    // Same state, same dice: the pick is drawn from the game's own RNG, so a
+    // seeded game stays reproducible.
+    let mut twin = s.clone();
+    assert_eq!(bundle, s.random_discard_bundle(0));
+    assert_eq!(bundle, twin.random_discard_bundle(0));
+
+    // But it is genuinely random across draws: over many timeouts the small sheep
+    // stack (slot 4) is taken sometimes, so it is not "keep the rare card" policy.
+    let mut saw_sheep = false;
+    for _ in 0..50 {
+        s.players[0].resources = ResourceHand([6, 0, 0, 0, 2]);
+        let b = s.random_discard_bundle(0);
+        assert_eq!(b.total(), 4);
+        saw_sheep |= b.get(Resource::Sheep) > 0;
+    }
+    assert!(
+        saw_sheep,
+        "a random discard must sometimes take the scarce card too"
+    );
+}
+
 #[test]
 fn longest_road_card_requires_five_and_handles_ties() {
     let mut s = fresh(2, 31);
