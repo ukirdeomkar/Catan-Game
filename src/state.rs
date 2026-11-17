@@ -1352,21 +1352,49 @@ mod tests {
 
     #[test]
     fn an_idle_steal_choice_takes_nobody() {
+        use crate::game::board::Building;
         let mut data = game_room(2, 23);
         {
             let g = data.game.as_mut().unwrap();
-            let hex = (g.robber_hex + 1) % g.board.hexes.len();
+            // A real victim sits on hex 0, so "nobody was robbed" is a claim the
+            // test can actually contradict: a wrong forced steal would take from
+            // them.
+            let v = g.board.hexes[0].vertices[0];
+            g.board.vertices[v].owner = Some(1);
+            g.board.vertices[v].building = Building::Settlement;
+            g.players[1].resources = crate::game::resources::ResourceHand([3, 0, 0, 0, 0]);
+            g.robber_hex = 1;
             g.current = 0;
-            g.phase = Phase::Steal { hex };
+            g.phase = Phase::Steal { hex: 0 };
         }
+        assert_eq!(
+            data.game.as_ref().unwrap().steal_candidates(0, 0),
+            vec![1],
+            "the fixture must offer somebody to rob"
+        );
+        let hands: Vec<_> = data
+            .game
+            .as_ref()
+            .unwrap()
+            .players
+            .iter()
+            .map(|p| p.resources)
+            .collect();
+
         let t0 = 6_000_000;
         tick_room_timers(&mut data, t0);
         assert_eq!(data.turn_deadline_ms, t0 + ROBBER_TIMEOUT_SECS * 1000);
         tick_room_timers(&mut data, t0 + ROBBER_TIMEOUT_SECS * 1000);
+
         let g = data.game.as_ref().unwrap();
         assert!(
             matches!(g.phase, Phase::Play),
             "the steal step is over instead of blocking the table"
+        );
+        assert_eq!(
+            hands,
+            g.players.iter().map(|p| p.resources).collect::<Vec<_>>(),
+            "the timed-out choice steals from nobody, so no hand may move"
         );
         assert!(
             g.log.iter().any(|l| l.text.contains("nobody was robbed")),
