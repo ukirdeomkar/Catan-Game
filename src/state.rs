@@ -759,6 +759,18 @@ pub fn room_code(room: &Arc<Room>) -> String {
     room.data.lock().unwrap().code.clone()
 }
 
+/// Read a room's code even when its `data` mutex is poisoned. The timer's
+/// per-room `Err` arm runs precisely because that mutex may be poisoned, so
+/// using [`room_code`] there would panic again and escape the tick loop,
+/// defeating the per-room isolation (#561).
+fn room_code_lenient(room: &Arc<Room>) -> String {
+    room.data
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .code
+        .clone()
+}
+
 fn new_token() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
@@ -1018,8 +1030,12 @@ pub fn tick_turn_timers(app: &AppState) {
         })) {
             Ok(tick) => tick,
             Err(_) => {
+                // Never re-lock with `unwrap` here: the panic often happened
+                // while `room.data` was held, which poisons the mutex. Reading
+                // the code through the poison would panic outside this room's
+                // guard and stop every later room from ticking (#561).
                 tracing::error!(
-                    code = %room_code(&room),
+                    code = %room_code_lenient(&room),
                     "timer tick panicked; skipped this room"
                 );
                 continue;
@@ -2290,4 +2306,67 @@ mod tests {
         drop(data);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// A panic that poisons a room's `data` mutex must be contained to that
+    /// room: the `Err` arm must still log (without re-locking with `unwrap`)
+    /// and healthy rooms in the same pass must still arm their clocks (#561).
+    #[test]
+    fn a_poisoned_room_is_skipped_without_stopping_the_other_clocks() {
+        use std::sync::Mutex as StdMutex;
+
+        #[derive(Clone, Default)]
+        struct LogSink(Arc<StdMutex<Vec<u8>>>);
+        impl std::io::Write for LogSink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let app = test_app("poisoned-room");
+        let (bad, _) = app.create_room("Bad".into(), 180, false).unwrap();
+        let (good, _) = app.create_room("Good".into(), 180, false).unwrap();
+
+        // Poison `bad.data` exactly as a panic while the tick holds it would.
+        let poisoned = Arc::clone(&bad);
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = poisoned.data.lock().unwrap();
+            panic!("force the room mutex to poison");
+        }));
+        assert!(caught.is_err());
+        assert!(bad.data.is_poisoned(), "the fixture must poison the mutex");
+
+        // The healthy room needs a deadline to arm.
+        good.data.lock().unwrap().game = Some(started_game(2, 6));
+
+        let logs = LogSink::default();
+        let sink = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || sink.clone())
+            .with_ansi(false)
+            .finish();
+        let _ = tracing::subscriber::with_default(subscriber, || tick_turn_timers(&app));
+
+        let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        let errors = text
+            .lines()
+            .filter(|line| line.contains("timer tick panicked; skipped this room"))
+            .count();
+        assert_eq!(errors, 1, "the poisoned room logs once: {text}");
+
+        let good_data = good.data.lock().unwrap();
+        assert!(
+            good_data.turn_deadline_ms > 0,
+            "the healthy room still arms its clock in the same pass"
+        );
+        drop(good_data);
+        assert!(
+            bad.data.is_poisoned(),
+            "the bad room is skipped, not repaired"
+        );
+    }
+
 }
