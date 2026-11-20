@@ -43,7 +43,14 @@ async fn main() {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         loop {
             tick.tick().await;
-            state::tick_turn_timers(&timers);
+            // These loops have no supervisor, so a panic must not end them: a
+            // dead timer task would silently stop every phase deadline (#81).
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state::tick_turn_timers(&timers)
+            }));
+            if run.is_err() {
+                tracing::error!("timer tick panicked; the clock keeps running");
+            }
         }
     });
 
@@ -53,7 +60,12 @@ async fn main() {
         let mut tick = tokio::time::interval(Duration::from_millis(700));
         loop {
             tick.tick().await;
-            state::tick_bots(&bots);
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                state::tick_bots(&bots)
+            }));
+            if run.is_err() {
+                tracing::error!("bot tick panicked; the loop keeps running");
+            }
         }
     });
 

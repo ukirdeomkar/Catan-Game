@@ -189,3 +189,22 @@
 
   apply();
 })();
+
+// Confirmations for destructive forms.
+//
+// These used to be inline `onsubmit="return confirm(...)"` attributes, which the
+// site's own CSP (`script-src 'self'`, no `unsafe-hashes`) refuses to run — so
+// Remove / Close room / Leave submitted with no prompt at all. Ask here instead,
+// in the capture phase so htmx never sees a cancelled submit.
+(function () {
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || !form.getAttribute) return;
+    var message = form.getAttribute("data-confirm");
+    if (!message) return;
+    if (!window.confirm(message)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+})();

@@ -861,6 +861,19 @@ pub fn waiting_seat(game: &GameState) -> Option<PlayerId> {
     }
 }
 
+/// The deadline a page should draw: only when it belongs to the phase that is
+/// waiting right now.
+///
+/// `turn_deadline_ms` is re-armed by the next 1 Hz tick, so for up to a second
+/// after a phase change it still holds the previous phase's clock. A sheet drawn
+/// in that window would show the wrong number (e.g. "175s" on a 40s discard), so
+/// the renderer asks for this instead of reading the field directly.
+pub fn visible_deadline(data: &RoomData, game: &GameState) -> Option<u64> {
+    let wait = phase_wait(data, game)?;
+    (data.turn_deadline_ms > 0 && data.turn_armed_for == wait.key)
+        .then_some(data.turn_deadline_ms)
+}
+
 /// The phase currently blocking on one seat, turned into the key the deadline is
 /// armed for, its timeout, and who owes the move.
 struct PhaseWait {
@@ -883,6 +896,9 @@ fn phase_wait(data: &RoomData, game: &GameState) -> Option<PhaseWait> {
         Phase::Steal { .. } => (5, ROBBER_TIMEOUT_SECS),
     };
     let actor = waiting_seat(game)?;
+    // A stale or hand-edited snapshot could name a seat that no longer exists;
+    // treat it as "nothing to wait for" instead of indexing off the end.
+    game.players.get(actor)?;
     Some(PhaseWait {
         // Phase, turn and seat: forcing a discard removes that seat from the
         // pending list, which changes the key and arms the next one's clock.
@@ -894,7 +910,7 @@ fn phase_wait(data: &RoomData, game: &GameState) -> Option<PhaseWait> {
 
 /// What one timer tick did to a room.
 #[derive(Default)]
-struct TimerTick {
+pub(crate) struct TimerTick {
     changed: bool,
     ended: bool,
     resumed: bool,
@@ -903,7 +919,7 @@ struct TimerTick {
 }
 
 /// Advance one room's clock by `now` (a parameter so tests need no sleeping).
-fn tick_room_timers(data: &mut RoomData, now: u64) -> TimerTick {
+pub(crate) fn tick_room_timers(data: &mut RoomData, now: u64) -> TimerTick {
     let mut tick = TimerTick::default();
     if data.paused {
         // Freeze every clock; only the auto-resume cap can move a paused room.
@@ -944,7 +960,13 @@ fn tick_room_timers(data: &mut RoomData, now: u64) -> TimerTick {
     let is_play = matches!(data.game.as_ref().map(|g| &g.phase), Some(Phase::Play));
     if let Some(game) = data.game.as_mut() {
         use crate::game::actions::Action;
-        let name = game.players[wait.actor].name.clone();
+        let Some(name) = game.players.get(wait.actor).map(|p| p.name.clone()) else {
+            // The seat vanished (stale room); drop the clock rather than panic.
+            data.turn_deadline_ms = 0;
+            data.turn_armed_for = u64::MAX;
+            tick.changed = true;
+            return tick;
+        };
         if is_play {
             game.force_end_turn();
         } else {
@@ -987,9 +1009,21 @@ pub fn tick_turn_timers(app: &AppState) {
     let now = now_ms();
     let rooms: Vec<Arc<Room>> = app.rooms.read().unwrap().values().cloned().collect();
     for room in rooms {
-        let tick = {
+        // This loop has no supervisor: a panic here would silently end every
+        // phase deadline in the process, which is exactly the wedge #77 fixed
+        // (#81). Catch per room so one bad state costs one room, not the clock.
+        let tick = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut data = room.data.lock().unwrap();
             tick_room_timers(&mut data, now)
+        })) {
+            Ok(tick) => tick,
+            Err(_) => {
+                tracing::error!(
+                    code = %room_code(&room),
+                    "timer tick panicked; skipped this room"
+                );
+                continue;
+            }
         };
         if tick.changed {
             room.bump();
@@ -1218,6 +1252,22 @@ mod tests {
         AppState::new(dir)
     }
 
+    /// A started game with `players` human seats.
+    fn started_game(players: usize, seed: u64) -> GameState {
+        let mut game = GameState::new_lobby(
+            (0..players)
+                .map(|i| PlayerConfig {
+                    name: format!("P{i}"),
+                    color: Color::ALL[i],
+                    is_bot: false,
+                })
+                .collect(),
+            seed,
+        );
+        game.start();
+        game
+    }
+
     /// A started room with `players` human seats, for driving the clock.
     fn game_room(players: usize, seed: u64) -> RoomData {
         let mut data = room(false, false);
@@ -1230,18 +1280,48 @@ mod tests {
             })
             .collect();
         data.host_token = "t0".into();
-        data.game = Some(GameState::new_lobby(
-            (0..players)
-                .map(|i| PlayerConfig {
-                    name: format!("P{i}"),
-                    color: Color::ALL[i],
-                    is_bot: false,
-                })
-                .collect(),
-            seed,
-        ));
-        data.game.as_mut().unwrap().start();
+        data.game = Some(started_game(players, seed));
         data
+    }
+
+    /// A stale snapshot can name a seat that is no longer there. That must not
+    /// panic the tick, and it must not stop the clock for every other room.
+    #[test]
+    fn a_room_with_a_missing_seat_does_not_stop_the_other_clocks() {
+        let app = test_app("broken-seat");
+        let (bad, _) = app.create_room("Bad".into(), 180, false).unwrap();
+        let (good, _) = app.create_room("Good".into(), 180, false).unwrap();
+        {
+            let mut d = bad.data.lock().unwrap();
+            let mut g = started_game(2, 5);
+            g.phase = Phase::Discard;
+            g.pending_discards = vec![99]; // no such seat
+            d.game = Some(g);
+        }
+        {
+            let mut d = good.data.lock().unwrap();
+            let mut g = started_game(2, 6);
+            g.phase = Phase::Discard;
+            g.pending_discards = vec![0];
+            g.players[0].resources = crate::game::resources::ResourceHand([8, 0, 0, 0, 0]);
+            d.game = Some(g);
+        }
+
+        tick_turn_timers(&app);
+
+        let bad_data = bad.data.lock().unwrap();
+        assert_eq!(
+            bad_data.turn_deadline_ms, 0,
+            "the broken room arms nothing and does not panic"
+        );
+        assert_eq!(bad_data.game.as_ref().unwrap().pending_discards, vec![99]);
+        drop(bad_data);
+
+        let good_data = good.data.lock().unwrap();
+        assert!(
+            good_data.turn_deadline_ms > 0,
+            "the healthy room still gets its discard clock"
+        );
     }
 
     #[test]
