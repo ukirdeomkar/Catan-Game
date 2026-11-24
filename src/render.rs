@@ -1385,7 +1385,8 @@ fn build_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> 
         mode != ViewMode::Normal || !COST_SETTLEMENT.can_pay(&p.resources) || p.settlements_left == 0;
     let city_dis =
         mode != ViewMode::Normal || !COST_CITY.can_pay(&p.resources) || p.cities_left == 0;
-    let dev_dis = game.dev_deck.is_empty() || !COST_DEV.can_pay(&p.resources);
+    let dev_missing = shortfall(COST_DEV, &p.resources);
+    let dev_dis = game.dev_deck.is_empty() || !dev_missing.is_empty();
     html! {
         div.sheet data-sheet="build" hidden {
             div.sheet-head {
@@ -1410,9 +1411,23 @@ fn build_sheet(game: &GameState, data: &RoomData, v: PlayerId, active: bool) -> 
                     span.bo-top { (ic("city")) "City" }
                     (cost_span(COST_CITY))
                 }
-                button.build-opt hx-post=(url) hx-vals=(r#"{"action":"buy_dev"}"#) disabled[dev_dis] {
+                button.build-opt hx-post=(url) hx-vals=(r#"{"action":"buy_dev"}"#) disabled[dev_dis]
+                    title=(format!("Buy a development card ({}).", bundle_text(&COST_DEV))) {
                     span.bo-top { (ic("dev")) "Dev card" }
                     (cost_span(COST_DEV))
+                }
+            }
+            // A disabled button with no reason reads as a broken game, which is
+            // exactly the "I often couldn't buy dev cards" report (OMK-608).
+            // Say whether the deck is empty or which cards are missing.
+            p.build-note.muted.small style="margin:8px 2px 0" {
+                @if game.dev_deck.is_empty() {
+                    "The development card deck is empty — no more can be bought this game."
+                } @else if !dev_missing.is_empty() {
+                    "Development card costs " (bundle_text(&COST_DEV)) ". Missing: "
+                    (bundle_text(&dev_missing)) ". Trade or use the bank for the rest."
+                } @else {
+                    "Development card costs " (bundle_text(&COST_DEV)) "."
                 }
             }
             p.muted.small style="margin:8px 2px 0" {
@@ -1815,6 +1830,18 @@ fn trade_modal(game: &GameState, data: &RoomData, v: PlayerId) -> Markup {
                 span #preview-give { "—" }
                 span.arrow { "⇄" }
                 span #preview-want { "—" }
+            }
+            // The bank takes many of one resource for one of another, and the
+            // rate depends on the ports the player owns. Without this line the
+            // player cannot tell 4:1 from 2:1, which is the "many-for-1" part
+            // of the OMK-608 report.
+            p.muted.small.bank-rates #bank-rates style="margin:0 0 10px" {
+                "Bank/port rate (give N of one resource, take 1 of another): "
+                @for (i, r) in ALL_RESOURCES.iter().enumerate() {
+                    (game.best_maritime_ratio(v, *r)) " " (r.name()) " → 1"
+                    @if i + 1 < ALL_RESOURCES.len() { " · " }
+                }
+                ". The Bank button needs exactly one resource in each row; use Offer to trade a bundle with players."
             }
             form #trade-form hx-post=(url) {
                 input type="hidden" name="action" value="propose_trade";
@@ -2585,6 +2612,18 @@ fn dice_anim() -> Markup {
 // Costs and build guide
 // ---------------------------------------------------------------------------
 
+/// Cards a player still needs before they can pay `cost`, given `hand`.
+fn shortfall(cost: Bundle, hand: &ResourceHand) -> Bundle {
+    let mut missing = Bundle::default();
+    for &r in ALL_RESOURCES.iter() {
+        let need = cost.get(r).saturating_sub(hand.get(r));
+        if need > 0 {
+            missing = missing.with(r, need);
+        }
+    }
+    missing
+}
+
 fn cost_span(cost: Bundle) -> Markup {
     html! {
         span.cost {
@@ -2833,6 +2872,82 @@ mod tests {
         assert!(
             !(p0 < timer && timer < p1),
             "P0 is not the one being waited on, so no clock on their card"
+        );
+    }
+
+    #[test]
+    fn the_build_sheet_names_the_dev_cost_and_the_missing_cards() {
+        let data = discard_room();
+        let mut game = data.game.clone().unwrap();
+        game.players[0].resources = ResourceHand([0, 0, 0, 1, 0]); // ore only
+        let sheet = build_sheet(&game, &data, 0, true).into_string();
+
+        assert!(
+            sheet.contains("Development card costs 1 Wheat, 1 Ore, 1 Sheep"),
+            "the cost must be readable without hover tooltips: {sheet}"
+        );
+        assert!(
+            sheet.contains("Missing: 1 Wheat, 1 Sheep"),
+            "the note must name exactly the cards still needed: {sheet}"
+        );
+        assert!(
+            sheet.contains("buy_dev") && sheet.contains("disabled"),
+            "the buy button stays disabled while the cards are short: {sheet}"
+        );
+    }
+
+    #[test]
+    fn the_build_sheet_explains_an_empty_dev_deck() {
+        let data = discard_room();
+        let mut game = data.game.clone().unwrap();
+        game.dev_deck.clear();
+        game.players[0].resources = ResourceHand([5, 5, 5, 5, 5]);
+        let sheet = build_sheet(&game, &data, 0, true).into_string();
+
+        assert!(
+            sheet.contains("development card deck is empty"),
+            "an empty deck must not look like a broken button: {sheet}"
+        );
+        assert!(sheet.contains("disabled"), "buy stays disabled: {sheet}");
+    }
+
+    #[test]
+    fn the_trade_sheet_shows_the_players_actual_bank_rates() {
+        let data = discard_room();
+        let mut game = data.game.clone().unwrap();
+        // No ports yet: every resource trades at the base 4:1 rate.
+        let modal = trade_modal(&game, &data, 0).into_string();
+        for r in ALL_RESOURCES {
+            assert!(
+                modal.contains(&format!("4 {} → 1", r.name())),
+                "the base 4:1 rate for {} must be shown: {modal}",
+                r.name()
+            );
+        }
+        assert!(
+            modal.contains("exactly one resource in each row"),
+            "the Bank button's single-resource rule must be explained: {modal}"
+        );
+
+        // Owning a matching 2:1 port improves that resource's rate only.
+        let (idx, kind) = game
+            .board
+            .vertices
+            .iter()
+            .enumerate()
+            .find_map(|(i, v)| {
+                v.port
+                    .filter(|k| k.resource().is_some())
+                    .map(|k| (i, k))
+            })
+            .expect("a generated board always has specific ports");
+        let port_res = kind.resource().unwrap();
+        game.board.vertices[idx].owner = Some(0);
+        game.board.vertices[idx].building = Building::Settlement;
+        let modal = trade_modal(&game, &data, 0).into_string();
+        assert!(
+            modal.contains(&format!("2 {} → 1", port_res.name())),
+            "a matching 2:1 port must show its improved rate: {modal}"
         );
     }
 }
