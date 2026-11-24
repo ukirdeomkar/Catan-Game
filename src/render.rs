@@ -269,7 +269,6 @@ fn head_common(title: &str) -> Markup {
             script src=(asset("/static/timer.js")) defer {}
             script src=(asset("/static/trade.js")) defer {}
             script src=(asset("/static/ui.js")) defer {}
-            script src=(asset("/static/roll-overlay.js")) defer {}
             script src=(asset("/static/discard.js")) defer {}
             script src=(asset("/static/audio.js")) defer {}
             script src=(asset("/static/pwa.js")) defer {}
@@ -1007,10 +1006,6 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             }
             div #trades.trades sse-swap="trades" { (f.trades) }
             div #turn.dockwrap sse-swap="turn" { (f.turn) }
-            // Stable host for the roll dialog. `roll-overlay.js` moves the
-            // dialog here when it opens so a concurrent SSE turn swap cannot
-            // tear an in-progress roll out from under the player.
-            div #roll-root.roll-root {}
             div #hand.handstrip sse-swap="hand" { (f.hand) }
             // Live-managed sheets: re-sent on every bump so the kick list
             // cannot keep showing a seat that just became a bot. The container
@@ -1356,15 +1351,21 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
         div.dock data-my-turn[my_play] {
             div.dock-dice data-my-dice[my_play && rolled] {
                 @if can_roll {
-                    // The roll lives on the left, away from End Turn on the
-                    // right. Tapping it only opens the overlay; it never posts.
-                    button.dockbtn.rollbtn type="button" data-roll-open
-                        title="Roll dice" aria-haspopup="dialog" aria-controls="roll-overlay" {
+                    // The turn starts with the dice already tumbling in the
+                    // dock, exactly like a bot's roll. `ui.js` reads the turn
+                    // key here and sends the one automatic roll per turn; the
+                    // hidden retry button is the only manual fallback and it
+                    // never opens a modal. Keeping the roll POST outside the
+                    // End Turn slot means the tap cannot land on End Turn.
+                    span.dice-wrap.rolling data-auto-roll data-roll-turn=(game.turn)
+                        title="Rolling…" { (dice_anim()) }
+                    button.dockbtn.retrybtn type="button" data-roll-retry hidden
+                        hx-post=(url) hx-vals=(r#"{"action":"roll"}"#) hx-swap="none"
+                        hx-disabled-elt="this" title="Retry roll" aria-label="Retry roll" {
                         (ic("dice"))
-                        span.rollbtn-label { "Roll" }
                     }
                 } @else {
-                    (dock_dice(game, data))
+                    (dock_dice(game))
                 }
             }
             @if data.allow_pause && !data.paused {
@@ -1397,7 +1398,6 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
                 div.dock-wait { "Waiting…" }
             }
         }
-        (roll_overlay(game, data, Some(v)))
         (build_sheet(game, data, v, my_play))
         (dev_sheet(game, data, v, has_dev))
         @if need_steal {
@@ -1426,56 +1426,20 @@ fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Mar
     }
 }
 
-/// The two-step roll dialog. It is only emitted for the active player who has
-/// not rolled yet; everyone else gets an empty fragment. The dock affordance
-/// opens it, and the actual `roll` POST only exists inside it, so the End Turn
-/// button can never sit under the tap that started a roll.
-pub(crate) fn roll_overlay(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
-    let Some(v) = viewer else {
-        return Markup::default();
-    };
-    if game.current != v || !matches!(game.phase, Phase::Play) || game.dice.is_some() {
-        return Markup::default();
-    }
-    let url = format!("/room/{}/action", data.code);
-    html! {
-        div #roll-overlay.roll-overlay data-roll-overlay data-roll-turn=(game.turn) hidden {
-            div.roll-backdrop data-roll-close aria-hidden="true" {}
-            div.roll-card role="dialog" aria-modal="true" aria-labelledby="roll-overlay-title" {
-                button.roll-x type="button" data-roll-close title="Close" aria-label="Close roll dialog" {
-                    (ic("x"))
-                }
-                h2 #roll-overlay-title { "Your turn" }
-                p.roll-hint { "Roll the dice to start your turn." }
-                div.roll-stage {
-                    span.dice-wrap data-roll-dicewrap {
-                        (dice_anim())
-                        span.roll-placeholder data-roll-placeholder { (ic("dice")) }
-                    }
-                }
-                button.roll-go type="button" data-roll-action
-                    hx-post=(url) hx-vals=(r#"{"action":"roll"}"#) hx-swap="none" hx-disabled-elt="this" {
-                    (ic("dice"))
-                    span { "Roll dice" }
-                }
-                p.roll-status data-roll-status aria-live="polite" {}
-            }
-        }
-    }
-}
-
-fn dock_dice(game: &GameState, data: &RoomData) -> Markup {
-    let cur_is_bot = data.members.get(game.current).map(|m| m.is_bot).unwrap_or(false);
-    let bot_rolling = cur_is_bot && matches!(game.phase, Phase::Play) && game.dice.is_none();
+/// The dock dice for anyone who is not the active unrolled player. A bot, or
+/// any other player whose turn has not produced a result yet, sees the same
+/// tumble the roller gets; `ui.js` reveals the landed pair after it arrives.
+fn dock_dice(game: &GameState) -> Markup {
+    let rolling = matches!(game.phase, Phase::Play) && game.dice.is_none();
     html! {
         @if let Some((a, b)) = game.dice {
             span.dice-wrap title=(format!("{a} + {b}")) {
                 (dice_anim())
                 span.dice-real { (dice_face(a)) (dice_face(b)) span.dice-total { (a + b) } }
             }
-        } @else if bot_rolling {
+        } @else if rolling {
             span.dice-wrap.rolling title="Rolling…" { (dice_anim()) }
-        }         @else {
+        } @else {
             span.dice-total style="color:#dbeaf4" { "—" }
         }
     }
