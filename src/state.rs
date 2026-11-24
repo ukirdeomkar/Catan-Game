@@ -538,6 +538,22 @@ impl AppState {
         self.rooms.read().unwrap().get(code).cloned()
     }
 
+    /// Report whether `code` still names a room a new human could join, without
+    /// taking a seat. Mirrors the checks in `join` so an invite link can show
+    /// the same "not found / full / already started" copy on the prefilled
+    /// join page before the visitor types a name.
+    pub fn check_joinable(&self, code: &str) -> Result<(), JoinError> {
+        let room = self.room(code).ok_or(JoinError::NotFound)?;
+        let data = room.data.lock().unwrap();
+        if data.started {
+            return Err(JoinError::AlreadyStarted);
+        }
+        if data.members.len() >= MAX_PLAYERS {
+            return Err(JoinError::Full);
+        }
+        Ok(())
+    }
+
     pub fn create_room(
         &self,
         name: String,
