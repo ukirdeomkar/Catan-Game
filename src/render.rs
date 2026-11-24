@@ -969,8 +969,15 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             // normal flow, so it never covers the dock, the roll dialog, or a
             // toast, and it is announced politely when the turn changes.
             div #turnbanner.turnbanner sse-swap="turnbanner" aria-live="polite" { (f.turnbanner) }
-            div #board.board sse-swap="board" { (f.board) }
-            div #controls.ctl sse-swap="controls" { (f.controls) }
+            // The board and its floating guidance pill share one positioning
+            // context, so the pill is pinned to the top of the board instead of
+            // a magic viewport offset. A taller player strip (e.g. a bot trade
+            // offer) pushes both down together and can never put the pill over
+            // the whose-turn banner.
+            div.board-wrap {
+                div #board.board sse-swap="board" { (f.board) }
+                div #controls.ctl sse-swap="controls" { (f.controls) }
+            }
             div #trades.trades sse-swap="trades" { (f.trades) }
             div #turn.dockwrap sse-swap="turn" { (f.turn) }
             // Stable host for the roll dialog. `roll-overlay.js` moves the
@@ -3055,6 +3062,25 @@ mod tests {
         assert!(
             page.contains("aria-live=\"polite\""),
             "turn changes must be announced politely"
+        );
+    }
+
+    /// The floating controls pill must share a positioning context with the
+    /// board, below the banner. Pinning it to a viewport offset let a taller
+    /// player strip (a bot trade offer) push the banner down under the pill
+    /// (QA B11 on OMK-613).
+    #[test]
+    fn the_controls_pill_is_scoped_below_the_turn_banner() {
+        let data = two_player_room();
+        let page = game_page("ABCD", &data, Some(0)).into_string();
+        let banner = page.find("id=\"turnbanner\"").expect("banner present");
+        let wrap = page.find("class=\"board-wrap\"").expect("board wrapper present");
+        let board = page.find("id=\"board\"").expect("board present");
+        let controls = page.find("id=\"controls\"").expect("controls present");
+        let trades = page.find("id=\"trades\"").expect("trades present");
+        assert!(
+            banner < wrap && wrap < board && board < controls && controls < trades,
+            "controls must live inside .board-wrap after the board, not in a fixed overlay"
         );
     }
 }
