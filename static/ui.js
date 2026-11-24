@@ -80,6 +80,8 @@
       bumpQueued = false;
       apply();
       syncDice();
+      reconcileAutoRoll();
+      guardEndTurn();
       checkLog();
     });
   }
@@ -97,23 +99,25 @@
   });
 
   // ---- Dice roll reveal ----------------------------------------------------
-  // Every viewer sees the roll in the bottom-left dock. When an SSE bump brings
-  // in a new dice pair, hold the tumble face for a moment before revealing the
-  // result (CSS hides `.dice-real` while `.rolling`). Keying on the pair keeps
-  // consecutive rolls with the same total animating. Bot rolls already tumble
-  // in place and the roller is watching the dialog, so both are left alone.
+  // Every viewer sees the roll in the bottom-left dock. While a turn has not
+  // produced a result yet the dock tumbles in place (server-rendered
+  // `.rolling`), then when the pair arrives it holds the tumble for a moment
+  // before revealing the result (CSS hides `.dice-real` while `.rolling`).
+  // Keying on the pair keeps consecutive rolls with the same total animating.
+  // There is one path: the roller, a bot and an observer all get this.
   var DICE_REVEAL_MS = 900;
+  var EXIT_SETTLE_MS = 850;
   var diceSeen = null;
   var dicePrimed = false;
   var diceRevealUntil = 0;
   var diceTimer = 0;
+  var settleUntil = 0;
 
   function dockDiceWrap() {
     return document.querySelector("#turn .dock-dice .dice-wrap");
   }
-  function rollDialogOpen() {
-    var el = document.querySelector("#roll-root [data-roll-overlay], #turn [data-roll-overlay]");
-    return !!(el && !el.hidden);
+  function dockDiceResult() {
+    return document.querySelector("#turn .dock-dice .dice-real");
   }
   function holdDice(wrap) {
     window.clearTimeout(diceTimer);
@@ -145,7 +149,7 @@
       return;
     }
     if (!pair || pair.indexOf("+") < 0) {
-      // `—` (no roll yet) or the bot's "Rolling…" placeholder.
+      // `—` (no roll yet) or the in-flight "Rolling…" placeholder.
       diceSeen = pair;
       return;
     }
@@ -154,13 +158,153 @@
       if (Date.now() < diceRevealUntil) wrap.classList.add("rolling");
       return;
     }
-    var prev = diceSeen;
     diceSeen = pair;
     diceRevealUntil = 0;
-    if (prev === "Rolling…" || rollDialogOpen()) return;
+    // The result landed: stop the auto-roll timeout and give End Turn a short
+    // settle window so an already-in-flight tap near the dock cannot skip it.
+    clearAutoRollTimer();
+    settleUntil = Date.now() + EXIT_SETTLE_MS;
+    guardEndTurn();
     holdDice(wrap);
   }
+
+  // ---- Automatic roll ------------------------------------------------------
+  // The dock renders the tumbling dice plus the one-shot turn marker. Send the
+  // existing roll POST once per turn with no tap. The turn key is the guard: an
+  // SSE bump, an htmx swap or a reconnect that re-renders the same turn can
+  // never send a second roll. On failure or a short timeout, reveal the
+  // non-modal retry button; the turn is never skipped.
+  var ROLL_TIMEOUT_MS = 4000;
+  var autoRollActiveKey = null;
+  var autoRollTimer = 0;
+  // The turn key is also remembered in sessionStorage so a full page reload in
+  // the same tab cannot re-send the roll for a turn this tab already fired.
+  // (SSE reconnects never reload the script, so the in-memory value is enough
+  // there; this covers an explicit refresh during the in-flight window.)
+  function autoRollStoreKey() {
+    return "catan-auto-roll:" + window.location.pathname;
+  }
+  function readAutoRollTurn() {
+    try {
+      return window.sessionStorage.getItem(autoRollStoreKey());
+    } catch (e) {
+      return null;
+    }
+  }
+  function rememberAutoRollTurn(key) {
+    try {
+      window.sessionStorage.setItem(autoRollStoreKey(), key);
+    } catch (e) {}
+  }
+  var autoRollTurn = readAutoRollTurn();
+
+  function autoRollMarker() {
+    return document.querySelector("#turn .dock-dice [data-auto-roll]");
+  }
+  function retryButton() {
+    return document.querySelector("#turn [data-roll-retry]");
+  }
+  function clearAutoRollTimer() {
+    window.clearTimeout(autoRollTimer);
+    autoRollTimer = 0;
+    autoRollActiveKey = null;
+  }
+  function armAutoRollTimeout(key) {
+    clearAutoRollTimer();
+    autoRollActiveKey = key;
+    autoRollTimer = window.setTimeout(function () {
+      autoRollTimer = 0;
+      if (autoRollActiveKey !== key) return;
+      autoRollActiveKey = null;
+      if (dockDiceResult()) return;
+      showRetry();
+    }, ROLL_TIMEOUT_MS);
+  }
+  // Non-modal fallback: stop the tumble and offer the dice button again. Called
+  // on a network error, an htmx error response, or when no dice arrive in time.
+  function showRetry() {
+    var wrap = autoRollMarker();
+    if (wrap && !dockDiceResult()) {
+      wrap.classList.remove("rolling");
+      wrap.hidden = true;
+    }
+    var btn = retryButton();
+    if (btn) {
+      btn.hidden = false;
+      btn.disabled = false;
+    }
+  }
+  function reconcileAutoRoll() {
+    var marker = autoRollMarker();
+    if (!marker) {
+      // The result landed (or the turn moved on): nothing left to send.
+      if (dockDiceResult()) clearAutoRollTimer();
+      return;
+    }
+    var key = marker.getAttribute("data-roll-turn");
+    if (key === null) return;
+    if (key === autoRollTurn) {
+      // Already sent for this turn. Keep the retry affordance if the request
+      // is no longer in flight and no result has arrived.
+      if (!autoRollActiveKey) showRetry();
+      return;
+    }
+    var btn = retryButton();
+    if (!btn || btn.disabled) return;
+    var url = btn.getAttribute("hx-post");
+    if (!url) return;
+    autoRollTurn = key;
+    rememberAutoRollTurn(key);
+    // Send the same roll POST the retry button carries. Going through
+    // `htmx.ajax` avoids relying on a synthetic click on a hidden button,
+    // which can be dropped while the swap that revealed it is still settling.
+    armAutoRollTimeout(key);
+    try {
+      var ajax = htmx.ajax("POST", url, { values: { action: "roll" }, swap: "none", source: btn });
+      // The htmx events below own the failure UI; swallow the promise
+      // rejection so a network failure does not also log an unhandled error.
+      if (ajax && ajax.catch) ajax.catch(function () {});
+    } catch (e) {
+      clearAutoRollTimer();
+      showRetry();
+    }
+  }
+  document.addEventListener("htmx:beforeRequest", function (e) {
+    var el = e.target || (e.detail && e.detail.elt);
+    if (!el || !el.hasAttribute || !el.hasAttribute("data-roll-retry")) return;
+    var marker = autoRollMarker();
+    armAutoRollTimeout(marker ? marker.getAttribute("data-roll-turn") : autoRollTurn);
+  });
+  function rollRequestFailed(e) {
+    var el = e.target || (e.detail && e.detail.elt);
+    if (!el || !el.hasAttribute || !el.hasAttribute("data-roll-retry")) return;
+    clearAutoRollTimer();
+    showRetry();
+  }
+  document.addEventListener("htmx:afterRequest", function (e) {
+    if (e.detail && e.detail.successful === false) rollRequestFailed(e);
+  });
+  document.addEventListener("htmx:sendError", rollRequestFailed);
+  document.addEventListener("htmx:responseError", rollRequestFailed);
+
+  // End Turn must not become tappable under a finger that was reaching for the
+  // dock while the result settles.
+  function guardEndTurn() {
+    var btn = document.querySelector("#turn [data-end-turn]");
+    if (!btn || Date.now() >= settleUntil) return;
+    btn.disabled = true;
+    btn.setAttribute("aria-disabled", "true");
+    var until = settleUntil;
+    window.setTimeout(function () {
+      if (Date.now() < until) return;
+      var b = document.querySelector("#turn [data-end-turn]");
+      if (!b) return;
+      b.disabled = false;
+      b.removeAttribute("aria-disabled");
+    }, Math.max(0, until - Date.now()) + 30);
+  }
   syncDice();
+  reconcileAutoRoll();
 
   // ---- Log-derived notifications ------------------------------------------
   var logInit = false;

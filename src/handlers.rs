@@ -1579,8 +1579,8 @@ mod tests {
     }
 
     #[test]
-    fn roll_overlay_is_only_for_the_active_unrolled_player() {
-        let app = test_app("roll-overlay");
+    fn turn_starts_with_the_auto_roll_dock_and_no_overlay() {
+        let app = test_app("auto-roll-dock");
         let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
         let code = room.data.lock().unwrap().code.clone();
         let (_, bob) = app.join(&code, "Bob".into()).unwrap();
@@ -1594,72 +1594,59 @@ mod tests {
             )
         };
 
-        let (alice_turn, bob_turn, alice_overlay, empty_overlay, turn_no) = {
+        let (alice_turn, bob_turn, turn_no) = {
             let data = room.data.lock().unwrap();
             let g = data.game.as_ref().unwrap();
             (
                 render::fragments(g, &data, Some(alice_seat)).turn.into_string(),
                 render::fragments(g, &data, Some(bob_seat)).turn.into_string(),
-                render::roll_overlay(g, &data, Some(alice_seat)).into_string(),
-                render::roll_overlay(g, &data, None).into_string(),
                 g.turn,
             )
         };
+        // The old popup is gone: no dialog, no backdrop, no dock "Roll" opener.
+        assert!(!alice_turn.contains(r#"data-roll-overlay"#), "{alice_turn}");
+        assert!(!alice_turn.contains("aria-modal"), "{alice_turn}");
+        assert!(!alice_turn.contains("data-roll-open"), "{alice_turn}");
+        // The active unrolled player gets the same dock tumble a bot gets,
+        // plus the per-turn auto-roll marker and the hidden retry fallback.
+        assert!(alice_turn.contains("dice-wrap rolling"), "{alice_turn}");
+        assert!(alice_turn.contains("dice-anim"), "{alice_turn}");
+        assert!(alice_turn.contains(r#"data-auto-roll"#), "{alice_turn}");
+        assert!(alice_turn.contains(r#"data-roll-retry"#), "{alice_turn}");
         assert!(
-            alice_overlay.contains(r#"data-roll-overlay"#),
-            "the active unrolled player gets the roll dialog"
+            alice_turn.contains("hidden"),
+            "the retry button must start hidden: {alice_turn}"
         );
-        assert!(alice_overlay.contains(r#"aria-modal="true""#));
-        assert!(alice_overlay.contains(r#"data-roll-action"#));
-        // The client auto-opens once per turn and remembers a dismissal by this
-        // key, so the dialog must carry the current game turn.
         let turn_key = format!(r#"data-roll-turn="{turn_no}""#);
         assert!(
-            alice_overlay.contains(&turn_key),
-            "the dialog must expose the game turn as its auto-open key: {alice_overlay}"
-        );
-        assert!(
             alice_turn.contains(&turn_key),
-            "the swapped-in turn fragment must carry the same turn key: {alice_turn}"
+            "the auto-roll must be keyed on the game turn: {alice_turn}"
         );
-        assert!(
-            alice_turn.contains("dockbtn rollbtn") && alice_turn.contains(r#"data-roll-open"#),
-            "the dock must offer the two-step roll: {alice_turn}"
-        );
-        assert!(
-            !alice_turn.contains("x-roll"),
-            "the old one-tap roll POST must be gone"
-        );
-        assert!(
-            !bob_turn.contains(r#"data-roll-overlay"#) && !bob_turn.contains(r#"data-roll-open"#),
-            "another player must not get the roll dialog: {bob_turn}"
-        );
-        assert!(empty_overlay.is_empty(), "spectators get no dialog");
+        // Another player watches the same tumble, but never auto-rolls it.
+        assert!(bob_turn.contains("dice-wrap rolling"), "{bob_turn}");
+        assert!(bob_turn.contains(r#"title="Rolling…""#), "{bob_turn}");
+        assert!(!bob_turn.contains(r#"data-auto-roll"#), "{bob_turn}");
+        assert!(!bob_turn.contains(r#"data-roll-retry"#), "{bob_turn}");
 
-        // After the roll: no dialog, the result and End Turn are in the dock.
-        let (rolled_turn, rolled_overlay) = {
+        // After the roll: result replaces the tumble, End Turn appears.
+        let rolled_turn = {
             let mut data = room.data.lock().unwrap();
             data.game.as_mut().unwrap().dice = Some((3, 4));
             let g = data.game.as_ref().unwrap();
-            (
-                render::fragments(g, &data, Some(alice_seat)).turn.into_string(),
-                render::roll_overlay(g, &data, Some(alice_seat)).into_string(),
-            )
+            render::fragments(g, &data, Some(alice_seat)).turn.into_string()
         };
-        assert!(rolled_overlay.is_empty(), "no dialog after the roll");
-        assert!(!rolled_turn.contains(r#"data-roll-overlay"#));
-        assert!(rolled_turn.contains(r#"data-end-turn"#));
-        assert!(rolled_turn.contains(r#"data-my-dice"#));
-        // The overlay JS looks for `.dock-dice .dice-real` (not `data-my-dice`)
-        // because a 7 leaves the phase as MoveRobber while the dice still show.
-        assert!(rolled_turn.contains("dice-real"));
+        assert!(!rolled_turn.contains(r#"data-auto-roll"#), "{rolled_turn}");
+        assert!(!rolled_turn.contains(r#"data-roll-retry"#), "{rolled_turn}");
+        assert!(rolled_turn.contains(r#"title="3 + 4""#), "{rolled_turn}");
+        assert!(rolled_turn.contains("dice-real"), "{rolled_turn}");
+        assert!(rolled_turn.contains(r#"data-end-turn"#), "{rolled_turn}");
         let _ = app;
         std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
 
     #[test]
-    fn roll_overlay_turn_key_advances_with_the_turn() {
-        let app = test_app("roll-overlay-turn");
+    fn auto_roll_marker_follows_the_turn() {
+        let app = test_app("auto-roll-turn");
         let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
         let code = room.data.lock().unwrap().code.clone();
         let (_, bob) = app.join(&code, "Bob".into()).unwrap();
@@ -1679,47 +1666,51 @@ mod tests {
         {
             let data = room.data.lock().unwrap();
             let g = data.game.as_ref().unwrap();
-            let overlay = render::roll_overlay(g, &data, Some(alice_seat)).into_string();
-            assert!(
-                overlay.contains(r#"data-roll-turn="7""#),
-                "the key must mirror GameState.turn: {overlay}"
-            );
+            let turn = render::fragments(g, &data, Some(alice_seat)).turn.into_string();
+            assert!(turn.contains(r#"data-roll-turn="7""#), "{turn}");
+            assert!(turn.contains(r#"data-auto-roll"#), "{turn}");
         }
         {
             let mut data = room.data.lock().unwrap();
             data.game.as_mut().unwrap().force_end_turn();
             let g = data.game.as_ref().unwrap();
-            // A real turn change moves the key so the client auto-opens again.
             assert_eq!(g.turn, 8, "ending a turn advances the turn counter");
             assert_eq!(g.current, bob_seat, "the next seat becomes active");
-            let next = render::roll_overlay(g, &data, Some(bob_seat)).into_string();
-            assert!(
-                next.contains(r#"data-roll-turn="8""#),
-                "the next player's dialog must carry the new turn: {next}"
-            );
+            let next = render::fragments(g, &data, Some(bob_seat)).turn.into_string();
+            assert!(next.contains(r#"data-roll-turn="8""#), "{next}");
+            assert!(next.contains(r#"data-auto-roll"#), "{next}");
+            // The previous player is now an observer of the new turn.
+            let prev = render::fragments(g, &data, Some(alice_seat)).turn.into_string();
+            assert!(!prev.contains(r#"data-auto-roll"#), "{prev}");
         }
         let _ = app;
         std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
 
     #[test]
-    fn roll_overlay_never_renders_end_turn() {
-        let app = test_app("roll-overlay-end");
+    fn auto_roll_dock_keeps_end_turn_until_the_result() {
+        let app = test_app("auto-roll-end");
         let (room, alice) = app.create_room("Alice".into(), 0, false).unwrap();
         room.data.lock().unwrap().add_bot(BotLevel::default());
         app.start_game(&room, &alice).unwrap();
         enter_play(&room);
-        let data = room.data.lock().unwrap();
-        let g = data.game.as_ref().unwrap();
-        let seat = data.member_index(&alice).unwrap();
-        let overlay = render::roll_overlay(g, &data, Some(seat)).into_string();
-        drop(data);
-        assert!(!overlay.contains("end_turn"), "the roll overlay must not end the turn");
-        assert!(!overlay.contains("data-end-turn"));
-        assert!(
-            overlay.contains("Roll dice"),
-            "the only action in the dialog is the roll itself"
-        );
+        let seat = room.data.lock().unwrap().member_index(&alice).unwrap();
+
+        let before = {
+            let data = room.data.lock().unwrap();
+            let g = data.game.as_ref().unwrap();
+            render::fragments(g, &data, Some(seat)).turn.into_string()
+        };
+        assert!(!before.contains("data-end-turn"), "{before}");
+        assert!(!before.contains(r#""action":"end_turn""#), "{before}");
+
+        let after = {
+            let mut data = room.data.lock().unwrap();
+            data.game.as_mut().unwrap().dice = Some((2, 5));
+            let g = data.game.as_ref().unwrap();
+            render::fragments(g, &data, Some(seat)).turn.into_string()
+        };
+        assert!(after.contains("data-end-turn"), "{after}");
         let _ = app;
         std::fs::remove_dir_all(app.data_dir.clone()).ok();
     }
@@ -1752,10 +1743,14 @@ mod tests {
                 render::fragments(g, &data, Some(bob_seat)).turn.into_string(),
             )
         };
-        assert!(alice_before.contains(r#"data-roll-open"#));
+        assert!(alice_before.contains(r#"data-auto-roll"#));
         assert!(
-            !bob_before.contains("dice-wrap"),
-            "another player sees no dice tile before the roll: {bob_before}"
+            bob_before.contains("dice-wrap rolling"),
+            "another player sees the same in-flight tumble: {bob_before}"
+        );
+        assert!(
+            !bob_before.contains(r#"data-auto-roll"#),
+            "only the active player auto-rolls: {bob_before}"
         );
 
         let (alice_after, bob_after) = {
