@@ -2767,6 +2767,7 @@ mod tests {
             turn_armed_for: u64::MAX,
             bot_next_ms: 0,
             bot_key: u64::MAX,
+            connections: Default::default(),
         }
     }
 
