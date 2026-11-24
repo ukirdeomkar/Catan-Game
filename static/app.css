@@ -67,7 +67,13 @@ body:not(.game) code.roomcode{background:#ffffff22;color:#ffeaa7;font-weight:900
 .codecard .invite-field>span{font-size:11px;font-weight:900;letter-spacing:.7px;text-transform:uppercase;color:#bcd3e3}
 body:not(.game) .codecard .invite-field input{width:100%;min-height:40px;font-size:13px;text-transform:none}
 .codecard .invite-actions{display:flex;gap:8px;flex-wrap:wrap}
-body:not(.game) .codecard .invite-actions .btn{width:auto;flex:1 1 140px;min-height:40px;gap:6px}
+/* Icon centred above the label on the copy/share buttons (owner request);
+   keeps the two buttons side by side and wrapping cleanly on a phone. */
+body:not(.game) .codecard .invite-actions .btn{width:auto;flex:1 1 140px;min-height:52px;gap:4px;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+body:not(.game) .codecard .invite-actions .btn .ic{width:20px;height:20px}
+/* The display override above would otherwise beat the UA `[hidden]` rule, so
+   keep Share hidden until lobby.js confirms navigator.share exists. */
+body:not(.game) .codecard .invite-actions .btn[hidden]{display:none}
 .invite-status{min-height:16px;font-size:12px;font-weight:700;color:#ffeaa7}
 body:not(.game) #audio-toggle{background:#ffffff22}
 body:not(.game) #audio-toggle:hover{background:#ffffff33}
