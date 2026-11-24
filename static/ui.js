@@ -117,6 +117,12 @@
   }
   function holdDice(wrap) {
     window.clearTimeout(diceTimer);
+    // Reduced motion: skip the tumble hold and show the landed pair at once.
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      diceRevealUntil = 0;
+      wrap.classList.remove("rolling");
+      return;
+    }
     diceRevealUntil = Date.now() + DICE_REVEAL_MS;
     wrap.classList.add("rolling");
     diceTimer = window.setTimeout(function () {
