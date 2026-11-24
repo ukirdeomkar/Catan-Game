@@ -389,8 +389,24 @@ async fn create_form() -> Html<String> {
     Html(render::create_page(None).into_string())
 }
 
-async fn join_form() -> Html<String> {
-    Html(render::join_room_page(None).into_string())
+/// Query for `/join`: the optional `?code=` carried by an invite link so the
+/// form opens with the room already chosen.
+#[derive(serde::Deserialize)]
+struct JoinQuery {
+    #[serde(default)]
+    code: String,
+}
+
+/// GET `/join` (optionally `?code=ABC123`). An invite link lands here with the
+/// room code filled in; we also check the code up front and reuse the same
+/// join error copy so a stale or started link explains itself immediately.
+async fn join_form(State(app): State<Arc<AppState>>, Query(q): Query<JoinQuery>) -> Html<String> {
+    let code = q.code.trim().to_uppercase();
+    if code.is_empty() {
+        return Html(render::join_room_page(None, None).into_string());
+    }
+    let error = app.check_joinable(&code).err();
+    Html(render::join_room_page(error.as_ref().map(join_error), Some(&code)).into_string())
 }
 
 #[derive(serde::Deserialize)]
@@ -443,7 +459,8 @@ async fn join(State(app): State<Arc<AppState>>, Form(form): Form<JoinForm>) -> R
             let (h, v) = set_cookie_header(&code, &token);
             ([(h, v)], Redirect::to(&format!("/room/{code}"))).into_response()
         }
-        Err(e) => Html(render::join_room_page(Some(join_error(&e))).into_string()).into_response(),
+        Err(e) => Html(render::join_room_page(Some(join_error(&e)), Some(&code)).into_string())
+            .into_response(),
     }
 }
 
@@ -1358,6 +1375,96 @@ mod tests {
             page.contains(r#"id="toasts""#),
             "lobby errors need a persistent #toasts target"
         );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[test]
+    fn lobby_offers_a_prefilled_invite_link_but_keeps_the_code() {
+        let app = test_app("lobby-invite");
+        let (room, token) = app.create_room("Al".into(), 0, false).unwrap();
+        let data = room.data.lock().unwrap();
+        let code = data.code.clone();
+        let page = render::lobby_page(&code, &data, &token).into_string();
+        drop(data);
+        assert!(
+            page.contains(&format!(r#"value="/join?code={code}""#)),
+            "the lobby must render a join link that carries the room code: {page}"
+        );
+        assert!(
+            page.contains(r#"id="copy-invite""#),
+            "the lobby needs a copy control for the invite link"
+        );
+        assert!(
+            page.contains(&format!(r#"<code class="roomcode">{code}</code>"#)),
+            "the visible room code stays as the typing fallback: {page}"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    async fn join_form_body(app: &Arc<AppState>, code: &str) -> String {
+        join_form(
+            State(app.clone()),
+            Query(JoinQuery {
+                code: code.into(),
+            }),
+        )
+        .await
+        .0
+    }
+
+    #[tokio::test]
+    async fn invite_link_prefills_a_live_room_code() {
+        let app = test_app("invite-live");
+        let (room, _token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+
+        // Lower case in the URL still normalises to the stored, upper-case code.
+        let body = join_form_body(&app, &code.to_lowercase()).await;
+        assert!(
+            body.contains(&format!(r#"value="{code}""#)),
+            "an invite link must pre-fill the room code: {body}"
+        );
+        assert!(
+            !body.contains("does not exist"),
+            "a live room must not show an error: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invite_link_explains_a_stale_or_unjoinable_room() {
+        let app = test_app("invite-errors");
+
+        let unknown = join_form_body(&app, "ZZZZZZ").await;
+        assert!(
+            unknown.contains("That room code does not exist."),
+            "an unknown code reuses the join error copy: {unknown}"
+        );
+        assert!(
+            unknown.contains(r#"value="ZZZZZZ""#),
+            "the bad code is kept so it can be corrected: {unknown}"
+        );
+
+        let (room, _token) = app.create_room("Al".into(), 0, false).unwrap();
+        let code = room.data.lock().unwrap().code.clone();
+        room.data.lock().unwrap().started = true;
+        let started = join_form_body(&app, &code).await;
+        assert!(
+            started.contains("That game has already started."),
+            "a started room reuses the join error copy: {started}"
+        );
+
+        let (full, _token) = app.create_room("Bo".into(), 0, false).unwrap();
+        let full_code = full.data.lock().unwrap().code.clone();
+        for name in ["Cy", "Di", "Ed"] {
+            app.join(&full_code, name.into()).unwrap();
+        }
+        let full_body = join_form_body(&app, &full_code).await;
+        assert!(
+            full_body.contains("That room is already full."),
+            "a full room reuses the join error copy: {full_body}"
+        );
+
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 

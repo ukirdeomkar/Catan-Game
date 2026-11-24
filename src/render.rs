@@ -65,6 +65,8 @@ fn ic(name: &str) -> Markup {
         "offer" => r#"<path d="M14.54 21.69a.5.5 0 0 0 .94-.03l6.5-19a.5.5 0 0 0-.64-.63l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="m21.85 2.15-10.94 10.94"/>"#,
         "swap" => r#"<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>"#,
         "trash" => r#"<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>"#,
+        "link" => r#"<path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 4.93"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L13 19.07"/>"#,
+        "share" => r#"<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/>"#,
         "person" => r#"<circle cx="12" cy="8" r="4.4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>"#,
         "palette" => r#"<circle cx="13.5" cy="6.5" r=".6" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r=".6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r=".6" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r=".6" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>"#,
         "angry" => r#"<circle cx="12" cy="12" r="9.5"/><path d="M16 16s-1.5-2-4-2-4 2-4 2"/><path d="M7.5 8 10 9"/><path d="m14 9 2.5-1"/><path d="M9 10h.01"/><path d="M15 10h.01"/>"#,
@@ -393,8 +395,11 @@ pub fn create_page(error: Option<&str>) -> Markup {
     })
 }
 
-/// Join-by-code screen: the room code and a name, nothing else.
-pub fn join_room_page(error: Option<&str>) -> Markup {
+/// Join-by-code screen: the room code and a name, nothing else. `code` is the
+/// pre-filled room code from an invite link (`/join?code=ABC123`) or a failed
+/// join attempt, so an invited friend only has to type their name.
+pub fn join_room_page(error: Option<&str>, code: Option<&str>) -> Markup {
+    let code_value = code.unwrap_or("");
     shell("Join room", html! {
         div.wrap.page {
             @if let Some(e) = error { div.card #toasts { (e) } }
@@ -406,7 +411,8 @@ pub fn join_room_page(error: Option<&str>) -> Markup {
                 form method="post" action="/join" {
                     label.field {
                         span { "Room code" }
-                        input type="text" name="code" placeholder="e.g. ABC123" maxlength="6" style="text-transform:uppercase";
+                        input type="text" name="code" placeholder="e.g. ABC123" maxlength="6"
+                            value=(code_value) style="text-transform:uppercase";
                     }
                     label.field {
                         span { "Your name" }
@@ -703,11 +709,32 @@ pub fn lobby_page(code: &str, data: &RoomData, token: &str) -> Markup {
             div #toasts.toasts {}
             div.hero {
                 h1 { "Lobby" }
-                p.muted { "Share this room code with friends" }
+                p.muted { "Share this room code or invite link with friends" }
             }
+            // The code card is outside the SSE-swapped `#lobbybox`, so the
+            // invite controls stay put while players join and leave. The invite
+            // link pre-fills the join form; the code stays as the fallback for
+            // anyone who prefers to type it.
             div.card.codecard {
                 span.codelabel { "Room code" }
                 code.roomcode { (code) }
+                div.invite {
+                    label.invite-field {
+                        span { "Invite link" }
+                        input #invite-link type="text" readonly
+                            value=(format!("/join?code={code}"))
+                            aria-label=(format!("Invite link for room {code}")) {}
+                    }
+                    div.invite-actions {
+                        button #copy-invite.btn.sec type="button" aria-label="Copy invite link" {
+                            (ic("link")) "Copy invite link"
+                        }
+                        button #share-invite.btn.sec type="button" aria-label="Share invite link" hidden {
+                            (ic("share")) "Share"
+                        }
+                    }
+                    span #invite-status.invite-status role="status" aria-live="polite" {}
+                }
             }
             div hx-ext="sse" sse-connect=(format!("/room/{code}/events")) {
                 div #lobbybox sse-swap="lobby" { (lobby_frag(code, data, token)) }

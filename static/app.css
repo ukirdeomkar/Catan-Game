@@ -60,6 +60,15 @@ body:not(.game) .pcard .pname{color:#fff}
 body:not(.game) code.roomcode{background:#ffffff22;color:#ffeaa7;font-weight:900;letter-spacing:6px;font-size:30px;padding:8px 16px 8px 22px;border-radius:12px}
 .codecard{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
 .codecard .codelabel{font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#bcd3e3}
+/* Invite link under the room code: a read-only copyable field plus copy/share
+   buttons. The code above stays visible as the fallback for typing. */
+.codecard .invite{width:100%;display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.codecard .invite-field{display:flex;flex-direction:column;gap:4px;text-align:left}
+.codecard .invite-field>span{font-size:11px;font-weight:900;letter-spacing:.7px;text-transform:uppercase;color:#bcd3e3}
+body:not(.game) .codecard .invite-field input{width:100%;min-height:40px;font-size:13px;text-transform:none}
+.codecard .invite-actions{display:flex;gap:8px;flex-wrap:wrap}
+body:not(.game) .codecard .invite-actions .btn{width:auto;flex:1 1 140px;min-height:40px;gap:6px}
+.invite-status{min-height:16px;font-size:12px;font-weight:700;color:#ffeaa7}
 body:not(.game) #audio-toggle{background:#ffffff22}
 body:not(.game) #audio-toggle:hover{background:#ffffff33}
 .wrap{max-width:1180px;margin:0 auto;padding:14px}
