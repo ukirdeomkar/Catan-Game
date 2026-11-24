@@ -232,8 +232,8 @@ Implemented in `src/bot.rs` (policy) + `state.rs::tick_bots` (driver).
   rejects, so a bug can't wedge a room.
 - **Driver/pacing** (`state::tick_bots`, called every 700 ms from `main.rs`): one bot action per
   tick, gated by `RoomData::bot_next_ms`. A new decision context (via `bot_context_key`) applies
-  a `BOT_FIRST_DELAY_MS` (4.5 s) pause, then `BOT_STEP_DELAY_MS` (2.5 s) between steps, so bot
-  turns take roughly 10–20 s and are watchable rather than instant.
+  a `BOT_FIRST_DELAY_MS` (2 s) pause, then `BOT_STEP_DELAY_MS` (2.5 s) between steps, so the
+  bot's roll lands within ~3 s of the turn starting while the rest of its turn stays watchable.
 - The host adds bots in the lobby (Easy/Medium/Hard); `RoomData::add_bot` creates the `Member`.
 - Tests in `bot.rs`: every tier plays full all-bot games to a winner across several seeds, plus
   setup/play move generation and exact-half discard.

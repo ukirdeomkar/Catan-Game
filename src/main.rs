@@ -69,6 +69,37 @@ async fn main() {
         }
     });
 
+    // Append an aggregate activity line every few minutes so the owner can see
+    // how many humans are actually playing and against whom. It writes nothing
+    // when nobody is connected.
+    let activity = app.clone();
+    let activity_path = state::activity_log_path(&app);
+    let activity_secs = std::env::var("CATAN_ACTIVITY_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(300);
+    tracing::info!(
+        "activity log: {} every {activity_secs}s",
+        activity_path.display()
+    );
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(activity_secs));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            // This loop has no supervisor, so a panic must not end it either.
+            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(snapshot) = state::snapshot_activity(&activity) {
+                    state::append_activity_log(&activity_path, &snapshot);
+                }
+            }));
+            if run.is_err() {
+                tracing::error!("activity snapshot panicked; the logger keeps running");
+            }
+        }
+    });
+
     let addr = std::env::var("CATAN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

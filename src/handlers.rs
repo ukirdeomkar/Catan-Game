@@ -2,7 +2,9 @@ use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
 use crate::game::state::{BotLevel, GameState, MAX_PLAYERS};
 use crate::render;
-use crate::state::{AppState, JoinError, Layout, LeaveChoice, Room, SeatOutcome, ViewMode, now_ms};
+use crate::state::{
+    AppState, ConnectionGuard, JoinError, Layout, LeaveChoice, Room, SeatOutcome, ViewMode, now_ms,
+};
 use axum::{
     extract::{ConnectInfo, Form, Path, Query, Request, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
@@ -536,6 +538,10 @@ async fn events(
         data.members[v].last_seen_ms = now_ms();
     }
 
+    // The token is authenticated, so this stream may now count as one live
+    // connection for that seat. The guard is moved into the event stream below
+    // and only drops when the stream ends, which decrements the refcount.
+    let connection = ConnectionGuard::new(room.clone(), token.clone());
     let rx = room.subscribe();
     let app2 = app.clone();
     let code2 = code.clone();
@@ -547,6 +553,8 @@ async fn events(
     let mut sent = FragmentDiff::default();
     let stream = WatchStream::new(rx)
         .map(move |_version| {
+            // Capture the guard so it lives exactly as long as this stream.
+            let _connection = &connection;
             let events = render_events(&app2, &code2, &token2, &mut sent);
             futures::stream::iter(events)
         })
@@ -654,6 +662,7 @@ fn render_events(
     push_frag(&mut out, diff, "trade_modal", f.trade_modal);
     push_frag(&mut out, diff, "manage", f.manage);
     push_frag(&mut out, diff, "log", f.log);
+    push_frag(&mut out, diff, "turnbanner", f.turnbanner);
     push_frag(&mut out, diff, "turn", f.turn);
     // Any lobby viewer still waiting on this connection should drop into the
     // game now; a game viewer has no `started` listener, so this costs one

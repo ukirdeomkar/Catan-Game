@@ -10,12 +10,21 @@
   // How long the result stays up before the dialog closes itself. Long enough
   // to read the number on a phone; a tap anywhere on the backdrop (or the ✕)
   // still dismisses it immediately.
-  var RESULT_HOLD_MS = 2200;
+  var RESULT_HOLD_MS = 1800;
+  // A short beat after the dialog opens so the player sees the popup land
+  // before the dice start moving. Auto-roll then fires the existing POST, so
+  // the result is in well under the 3 s target.
+  var AUTO_ROLL_DELAY_MS = 500;
   var pending = false;
   var rollSentAt = 0;
   var settleUntil = 0;
   var lastFocus = null;
   var timeout = 0;
+  // The turn key whose auto-roll has already fired. A re-render, an SSE bump,
+  // or a reconnect mid-turn must never send a second roll for the same turn.
+  var autoRolledTurn = null;
+  var autoRollTimer = 0;
+  var autoRollKey = null;
   // True from the moment the dice land until the result reveal auto-closes, so
   // the "your turn is over" guard below cannot cut the reveal short (a 7 moves
   // the phase to MoveRobber, where `data-my-turn` is already gone).
@@ -38,6 +47,13 @@
 
   function turnKey(el) {
     return el ? el.getAttribute("data-roll-turn") : null;
+  }
+
+  function prefersReducedMotion() {
+    return !!(
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
   }
 
   // A mandatory sheet (discard/steal) or the trade modal owns the screen right
@@ -96,9 +112,48 @@
     } else if (el.parentNode) {
       el.parentNode.removeChild(el);
     }
-    if (dismissed && key !== null) dismissedTurn = key;
+    if (dismissed && key !== null) {
+      dismissedTurn = key;
+      // The player closed the popup before the auto-roll fired: honour the
+      // dismissal for this turn and do not roll behind a closed dialog.
+      if (autoRollKey === key) {
+        window.clearTimeout(autoRollTimer);
+        autoRollTimer = 0;
+        autoRollKey = null;
+      }
+    }
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
     lastFocus = null;
+  }
+
+  // Arm the one automatic roll for this turn. The timer is keyed on the same
+  // `data-roll-turn` value the dismissal uses, so an SSE bump or reconnect in
+  // the same turn never schedules a second send. After this turn's auto-roll
+  // has fired, the Roll dice button remains the manual fallback.
+  function scheduleAutoRoll(key) {
+    if (key === null || key === autoRolledTurn) return;
+    if (autoRollTimer && autoRollKey === key) return;
+    autoRollKey = key;
+    autoRollTimer = window.setTimeout(function () {
+      autoRollTimer = 0;
+      if (autoRollKey !== key) return;
+      autoRollKey = null;
+      if (pending || dismissedTurn === key) return;
+      var box = liveOverlay();
+      if (!box || turnKey(box) !== key) return;
+      if (screenBusy()) {
+        // A mandatory sheet took the screen. Try again once it is gone; this
+        // is still the same turn, so only one auto-roll is ever sent.
+        scheduleAutoRoll(key);
+        return;
+      }
+      var btn = box.querySelector("[data-roll-action]");
+      if (!btn || btn.disabled) return;
+      autoRolledTurn = key;
+      // Reuse the button's existing htmx POST; the document-level click
+      // handler switches it into the `pending`/rolling state as usual.
+      btn.click();
+    }, AUTO_ROLL_DELAY_MS);
   }
 
   // The server only renders the dialog for the active, unrolled player, so its
@@ -112,6 +167,7 @@
     if (key !== null && key === dismissedTurn) return;
     if (screenBusy()) return;
     open();
+    scheduleAutoRoll(key);
   }
 
   function startRoll(e) {
@@ -129,7 +185,7 @@
     btn.disabled = true;
     btn.classList.add("is-rolling");
     var wrap = el.querySelector("[data-roll-dicewrap]");
-    if (wrap) wrap.classList.add("rolling");
+    if (wrap && !prefersReducedMotion()) wrap.classList.add("rolling");
     var status = el.querySelector("[data-roll-status]");
     if (status) status.textContent = "Rolling…";
     timeout = window.setTimeout(function () {
