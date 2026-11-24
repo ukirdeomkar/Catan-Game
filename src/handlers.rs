@@ -662,6 +662,7 @@ fn render_events(
     push_frag(&mut out, diff, "trade_modal", f.trade_modal);
     push_frag(&mut out, diff, "manage", f.manage);
     push_frag(&mut out, diff, "log", f.log);
+    push_frag(&mut out, diff, "turnbanner", f.turnbanner);
     push_frag(&mut out, diff, "turn", f.turn);
     // Any lobby viewer still waiting on this connection should drop into the
     // game now; a game viewer has no `started` listener, so this costs one

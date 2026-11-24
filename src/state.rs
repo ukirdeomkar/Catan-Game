@@ -1156,8 +1156,10 @@ fn bot_actor(data: &RoomData, game: &GameState) -> Option<(PlayerId, BotLevel)> 
 
 /// Delay before a bot's first action in a new decision context (turn, setup
 /// placement, robber step, …) and between its subsequent actions in the same
-/// one. Keeps bot turns watchable (roughly 10–20s) instead of instant.
-const BOT_FIRST_DELAY_MS: u64 = 4500;
+/// one. The first action is the one observers wait through when a bot turn
+/// starts, so it is kept short enough that the dice land within ~3 s; the
+/// step delay keeps the rest of the turn watchable (roughly 8–15 s).
+const BOT_FIRST_DELAY_MS: u64 = 2000;
 const BOT_STEP_DELAY_MS: u64 = 2500;
 
 /// A value that changes only when the bot faces a genuinely new decision, so a
@@ -2493,6 +2495,17 @@ mod tests {
         drop(data);
         let _ = bob;
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The bot's first action is what observers wait through when a bot turn
+    /// starts. The driver runs every 700 ms, so keep the delay itself well
+    /// under the ~3 s roll target to leave room for one tick of alignment.
+    #[test]
+    fn bot_first_action_fits_the_three_second_roll_target() {
+        assert!(
+            BOT_FIRST_DELAY_MS <= 2300,
+            "the first bot action must land within ~3s: {BOT_FIRST_DELAY_MS}ms"
+        );
     }
 
     #[test]

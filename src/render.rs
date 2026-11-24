@@ -860,6 +860,10 @@ pub struct Fragments {
     pub controls: Markup,
     pub trades: Markup,
     pub log: Markup,
+    /// Whose-turn banner shown at the top of the board. Kept separate from
+    /// `turn` so it updates on every phase change even when the dock markup is
+    /// unchanged, and so it can be swapped without touching the roll dialog.
+    pub turnbanner: Markup,
     pub turn: Markup,
     /// Inner body of the trade sheet. Re-sent on every version bump so the
     /// resource picker follows the viewer's live layout instead of the layout
@@ -885,6 +889,7 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
                 controls: Markup::default(),
                 trades: Markup::default(),
                 log: Markup::default(),
+                turnbanner: html! { span.tb-text { "Game paused" } },
                 turn: Markup::default(),
                 trade_modal: Markup::default(),
                 manage: Markup::default(),
@@ -902,6 +907,7 @@ pub fn fragments(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
         controls: controls_frag(game, data, viewer),
         trades: trades_frag(game, &data.code, viewer),
         log: log_frag(game),
+        turnbanner: turn_banner_frag(game, viewer),
         turn: turn_frag(game, data, viewer),
         trade_modal: viewer.map(|v| trade_modal(game, data, v)).unwrap_or_default(),
         manage: viewer
@@ -959,8 +965,19 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
             }
             div #status.topbar sse-swap="status" { (f.status) }
             div #players.pstrip sse-swap="players" { (f.players) }
-            div #board.board sse-swap="board" { (f.board) }
-            div #controls.ctl sse-swap="controls" { (f.controls) }
+            // Persistent whose-turn banner directly above the board. It sits in
+            // normal flow, so it never covers the dock, the roll dialog, or a
+            // toast, and it is announced politely when the turn changes.
+            div #turnbanner.turnbanner sse-swap="turnbanner" aria-live="polite" { (f.turnbanner) }
+            // The board and its floating guidance pill share one positioning
+            // context, so the pill is pinned to the top of the board instead of
+            // a magic viewport offset. A taller player strip (e.g. a bot trade
+            // offer) pushes both down together and can never put the pill over
+            // the whose-turn banner.
+            div.board-wrap {
+                div #board.board sse-swap="board" { (f.board) }
+                div #controls.ctl sse-swap="controls" { (f.controls) }
+            }
             div #trades.trades sse-swap="trades" { (f.trades) }
             div #turn.dockwrap sse-swap="turn" { (f.turn) }
             // Stable host for the roll dialog. `roll-overlay.js` moves the
@@ -1212,6 +1229,74 @@ fn controls_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) ->
 // ---------------------------------------------------------------------------
 // Dock + bottom sheets
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Whose-turn banner
+// ---------------------------------------------------------------------------
+
+/// The top-of-board banner that always names whose turn it is. Rendered from
+/// the authoritative `GameState` and re-sent on every SSE bump, so it cannot
+/// lag the real turn. It is phase-aware so it never claims "your turn" while
+/// someone must discard, move the robber, or steal.
+fn turn_banner_frag(game: &GameState, viewer: Option<PlayerId>) -> Markup {
+    let active = game.current;
+    let mine = viewer == Some(active);
+    let active_name = game.players[active].name.as_str();
+    let text = match &game.phase {
+        Phase::Lobby => "Starting…".to_string(),
+        Phase::GameOver => match game.winner {
+            Some(w) => format!("{} wins!", game.players[w].name),
+            None => "Game over".to_string(),
+        },
+        Phase::Setup => {
+            if mine {
+                "Your turn to place".to_string()
+            } else {
+                format!("{active_name} is placing")
+            }
+        }
+        Phase::Play => {
+            if mine {
+                "Your turn".to_string()
+            } else {
+                format!("{active_name}'s turn")
+            }
+        }
+        Phase::Discard => {
+            let waiters: Vec<&str> = game
+                .pending_discards
+                .iter()
+                .map(|p| game.players[*p].name.as_str())
+                .collect();
+            if viewer.is_some_and(|v| game.pending_discards.contains(&v)) {
+                "You must discard".to_string()
+            } else if waiters.is_empty() {
+                format!("{active_name}'s turn")
+            } else {
+                format!("{} must discard", waiters.join(", "))
+            }
+        }
+        Phase::MoveRobber { .. } => {
+            if mine {
+                "Your turn to move the robber".to_string()
+            } else {
+                format!("{active_name} is moving the robber")
+            }
+        }
+        Phase::Steal { .. } => {
+            if mine {
+                "Your turn to steal".to_string()
+            } else {
+                format!("{active_name} is stealing")
+            }
+        }
+    };
+    let win = matches!(game.phase, Phase::GameOver) && game.winner.is_some();
+    html! {
+        span.tb-dot style=(format!("--tb:{}", color_hex(game.players[active].color))) {}
+        span.tb-text.me[mine].win[win] { (text) }
+    }
+}
 
 fn turn_frag(game: &GameState, data: &RoomData, viewer: Option<PlayerId>) -> Markup {
     let Some(v) = viewer else {
@@ -2649,10 +2734,10 @@ mod tests {
         }
     }
 
-    /// Two human seats, mid-game, with player 1 owing a discard and the clock
-    /// running on them (player 0 is the current player, so the timer must not sit
-    /// on their card).
-    fn discard_room() -> RoomData {
+    /// Two human seats, freshly started. The default fixture: the game is in
+    /// Setup with P0 on the clock, so tests can mutate just the phase they care
+    /// about without rebuilding the whole room.
+    fn two_player_room() -> RoomData {
         let configs: Vec<PlayerConfig> = (0..2)
             .map(|i| PlayerConfig {
                 name: format!("P{i}"),
@@ -2662,10 +2747,7 @@ mod tests {
             .collect();
         let mut game = GameState::new_lobby(configs, 5);
         game.start();
-        game.players[1].resources = ResourceHand([8, 0, 0, 0, 0]);
-        game.phase = Phase::Discard;
-        game.pending_discards = vec![1];
-        let mut data = RoomData {
+        RoomData {
             code: "ABCD".into(),
             host_token: "t0".into(),
             members: vec![member("P0", 0), member("P1", 1)],
@@ -2686,7 +2768,20 @@ mod tests {
             bot_next_ms: 0,
             bot_key: u64::MAX,
             connections: Default::default(),
-        };
+        }
+    }
+
+    /// Two human seats, mid-game, with player 1 owing a discard and the clock
+    /// running on them (player 0 is the current player, so the timer must not sit
+    /// on their card).
+    fn discard_room() -> RoomData {
+        let mut data = two_player_room();
+        {
+            let g = data.game.as_mut().unwrap();
+            g.players[1].resources = ResourceHand([8, 0, 0, 0, 0]);
+            g.phase = Phase::Discard;
+            g.pending_discards = vec![1];
+        }
         // Arm the clock exactly as the 1 Hz tick would, so the fixture has a
         // deadline that genuinely belongs to the discard phase.
         crate::state::tick_room_timers(&mut data, NOW);
@@ -2834,6 +2929,159 @@ mod tests {
         assert!(
             !(p0 < timer && timer < p1),
             "P0 is not the one being waited on, so no clock on their card"
+        );
+    }
+
+    #[test]
+    fn the_turn_banner_says_your_turn_only_to_the_active_player() {
+        let mut data = two_player_room();
+        {
+            let g = data.game.as_mut().unwrap();
+            g.phase = Phase::Play;
+            g.current = 0;
+        }
+        let game = data.game.clone().unwrap();
+
+        let mine = fragments(&game, &data, Some(0)).turnbanner.into_string();
+        assert!(mine.contains("Your turn"), "active player sees it: {mine}");
+        assert!(
+            mine.contains("tb-text me"),
+            "the active line is visually emphasised: {mine}"
+        );
+
+        let other = fragments(&game, &data, Some(1)).turnbanner.into_string();
+        assert!(
+            other.contains("P0") && other.contains("turn"),
+            "others see the active player's name: {other}"
+        );
+        assert!(
+            !other.contains("Your turn"),
+            "a bystander must never read \"Your turn\": {other}"
+        );
+        assert!(
+            !other.contains("tb-text me"),
+            "the bystander line is not emphasised as mine: {other}"
+        );
+    }
+
+    #[test]
+    fn the_turn_banner_is_phase_aware() {
+        // Setup is the default after start(): P0 is placing.
+        let data = two_player_room();
+        let game = data.game.clone().unwrap();
+        assert!(
+            fragments(&game, &data, Some(0))
+                .turnbanner
+                .into_string()
+                .contains("Your turn to place")
+        );
+        assert!(
+            fragments(&game, &data, Some(1))
+                .turnbanner
+                .into_string()
+                .contains("P0 is placing")
+        );
+
+        // Discard names the players who actually owe cards, not the roller.
+        let mut discard = two_player_room();
+        {
+            let g = discard.game.as_mut().unwrap();
+            g.phase = Phase::Discard;
+            g.pending_discards = vec![1];
+        }
+        let game = discard.game.clone().unwrap();
+        assert!(
+            fragments(&game, &discard, Some(1))
+                .turnbanner
+                .into_string()
+                .contains("You must discard")
+        );
+        assert!(
+            fragments(&game, &discard, Some(0))
+                .turnbanner
+                .into_string()
+                .contains("P1 must discard")
+        );
+
+        // Robber and steal say what the active player is actually doing.
+        let mut robber = two_player_room();
+        robber.game.as_mut().unwrap().phase = Phase::MoveRobber { after_knight: false };
+        let game = robber.game.clone().unwrap();
+        assert!(
+            fragments(&game, &robber, Some(0))
+                .turnbanner
+                .into_string()
+                .contains("Your turn to move the robber")
+        );
+        assert!(
+            fragments(&game, &robber, Some(1))
+                .turnbanner
+                .into_string()
+                .contains("P0 is moving the robber")
+        );
+
+        let mut steal = two_player_room();
+        steal.game.as_mut().unwrap().phase = Phase::Steal { hex: 0 };
+        let game = steal.game.clone().unwrap();
+        assert!(
+            fragments(&game, &steal, Some(0))
+                .turnbanner
+                .into_string()
+                .contains("Your turn to steal")
+        );
+        assert!(
+            fragments(&game, &steal, Some(1))
+                .turnbanner
+                .into_string()
+                .contains("P0 is stealing")
+        );
+
+        // Game over credits the winner to everyone.
+        let mut over = two_player_room();
+        {
+            let g = over.game.as_mut().unwrap();
+            g.phase = Phase::GameOver;
+            g.winner = Some(0);
+        }
+        let game = over.game.clone().unwrap();
+        assert!(
+            fragments(&game, &over, Some(1))
+                .turnbanner
+                .into_string()
+                .contains("P0 wins!")
+        );
+    }
+
+    #[test]
+    fn game_page_hosts_the_live_turn_banner() {
+        let data = two_player_room();
+        let page = game_page("ABCD", &data, Some(0)).into_string();
+        assert!(
+            page.contains("id=\"turnbanner\"") && page.contains("sse-swap=\"turnbanner\""),
+            "the banner needs a stable live-swap host"
+        );
+        assert!(
+            page.contains("aria-live=\"polite\""),
+            "turn changes must be announced politely"
+        );
+    }
+
+    /// The floating controls pill must share a positioning context with the
+    /// board, below the banner. Pinning it to a viewport offset let a taller
+    /// player strip (a bot trade offer) push the banner down under the pill
+    /// (QA B11 on OMK-613).
+    #[test]
+    fn the_controls_pill_is_scoped_below_the_turn_banner() {
+        let data = two_player_room();
+        let page = game_page("ABCD", &data, Some(0)).into_string();
+        let banner = page.find("id=\"turnbanner\"").expect("banner present");
+        let wrap = page.find("class=\"board-wrap\"").expect("board wrapper present");
+        let board = page.find("id=\"board\"").expect("board present");
+        let controls = page.find("id=\"controls\"").expect("controls present");
+        let trades = page.find("id=\"trades\"").expect("trades present");
+        assert!(
+            banner < wrap && wrap < board && board < controls && controls < trades,
+            "controls must live inside .board-wrap after the board, not in a fixed overlay"
         );
     }
 }
