@@ -122,6 +122,13 @@ pub struct RoomData {
     /// Context key for the bot's current decision; a change re-arms the delay.
     #[serde(skip)]
     pub bot_key: u64,
+    /// Open SSE event-stream connections per member token. Runtime-only, so it
+    /// is never persisted: incremented when a viewer's stream starts and
+    /// decremented when that stream drops. A seat with no open stream is not
+    /// "active" even if its `connected` flag is still set (HANDOVER §8.3).
+    /// Two tabs on one seat leave this at 2, but still count as one player.
+    #[serde(skip)]
+    pub connections: HashMap<String, usize>,
 }
 
 impl RoomData {
@@ -135,6 +142,22 @@ impl RoomData {
 
     pub fn human_count(&self) -> usize {
         self.members.iter().filter(|m| !m.is_bot).count()
+    }
+
+    /// Record one more open SSE stream for `token`.
+    pub fn add_connection(&mut self, token: &str) {
+        *self.connections.entry(token.to_string()).or_insert(0) += 1;
+    }
+
+    /// Record that one SSE stream for `token` closed. The entry is dropped at
+    /// zero so the map only holds seats that actually have a live viewer.
+    pub fn remove_connection(&mut self, token: &str) {
+        if let Some(count) = self.connections.get_mut(token) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.connections.remove(token);
+            }
+        }
     }
 
     pub fn can_start(&self) -> bool {
@@ -418,6 +441,44 @@ impl Room {
     }
 }
 
+/// Holds one room member's SSE connection count for as long as the event
+/// stream lives. Dropping it — the client disconnects, the stream ends, or the
+/// response is never sent — decrements the refcount, so a stale `connected`
+/// flag can never inflate the active-player metric.
+pub struct ConnectionGuard {
+    room: Arc<Room>,
+    token: String,
+}
+
+impl ConnectionGuard {
+    /// Increment `token`'s connection count and return the guard that owns it.
+    /// Call this only after the token has been authenticated.
+    pub fn new(room: Arc<Room>, token: String) -> Self {
+        {
+            // Recover a poisoned mutex: a panic elsewhere must not stop this
+            // attempt from counting, and it must not leak a count either.
+            let mut data = room
+                .data
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            data.add_connection(&token);
+        }
+        Self { room, token }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        // Never panic in a drop: this runs while the response is torn down.
+        let mut data = self
+            .room
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        data.remove_connection(&self.token);
+    }
+}
+
 pub struct AppState {
     pub rooms: RwLock<HashMap<String, Arc<Room>>>,
     pub data_dir: PathBuf,
@@ -523,6 +584,7 @@ impl AppState {
             turn_armed_for: u64::MAX,
             bot_next_ms: 0,
             bot_key: u64::MAX,
+            connections: HashMap::new(),
         };
         let room = Room::new(data);
         rooms.insert(code.clone(), room.clone());
@@ -1209,6 +1271,148 @@ pub fn sweep(app: &AppState, max_idle_ms: u64) {
     }
 }
 
+/// One room's runtime activity facts, copied out of a `Room` so aggregation is
+/// a pure function over plain data (no locks, no server) and easy to test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemberActivity {
+    pub is_bot: bool,
+    pub left: bool,
+    /// Open SSE streams for this seat (0 = not currently watching).
+    pub connections: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RoomActivity {
+    pub started: bool,
+    pub members: Vec<MemberActivity>,
+}
+
+impl RoomActivity {
+    fn from_data(data: &RoomData) -> Self {
+        Self {
+            started: data.started,
+            members: data
+                .members
+                .iter()
+                .map(|m| MemberActivity {
+                    is_bot: m.is_bot,
+                    left: m.left,
+                    connections: data.connections.get(&m.token).copied().unwrap_or(0),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One aggregate line of the activity log.
+///
+/// `ts` is Unix epoch milliseconds in UTC, chosen over ISO-8601 so the log
+/// needs no date/time dependency. Only aggregate counts are written — never a
+/// name, token or room code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ActivitySnapshot {
+    pub ts: u64,
+    pub active_humans: usize,
+    pub active_rooms: usize,
+    pub humans_only_rooms: usize,
+    pub with_bots_rooms: usize,
+    pub active_humans_vs_humans: usize,
+    pub active_humans_vs_bots: usize,
+    pub total_bots_in_active_rooms: usize,
+    pub active_humans_in_play: usize,
+}
+
+/// Aggregate rooms into one snapshot. Returns `None` when nobody is active, so
+/// the logger can skip the write entirely.
+///
+/// An *active human* is a member that is not a bot, has not left, and has at
+/// least one open SSE stream. Multiple streams for the same seat still count as
+/// one human. A room is active when it holds at least one active human.
+pub fn aggregate_activity(rooms: &[RoomActivity], ts: u64) -> Option<ActivitySnapshot> {
+    let mut snap = ActivitySnapshot {
+        ts,
+        active_humans: 0,
+        active_rooms: 0,
+        humans_only_rooms: 0,
+        with_bots_rooms: 0,
+        active_humans_vs_humans: 0,
+        active_humans_vs_bots: 0,
+        total_bots_in_active_rooms: 0,
+        active_humans_in_play: 0,
+    };
+    for room in rooms {
+        let active_humans = room
+            .members
+            .iter()
+            .filter(|m| !m.is_bot && !m.left && m.connections > 0)
+            .count();
+        if active_humans == 0 {
+            continue;
+        }
+        let bots = room.members.iter().filter(|m| m.is_bot).count();
+        snap.active_humans += active_humans;
+        snap.active_rooms += 1;
+        snap.total_bots_in_active_rooms += bots;
+        if bots == 0 {
+            snap.humans_only_rooms += 1;
+            snap.active_humans_vs_humans += active_humans;
+        } else {
+            snap.with_bots_rooms += 1;
+            snap.active_humans_vs_bots += active_humans;
+        }
+        if room.started {
+            snap.active_humans_in_play += active_humans;
+        }
+    }
+    (snap.active_humans > 0).then_some(snap)
+}
+
+/// Snapshot every live room. Locks each room briefly, copying only the counts
+/// aggregation needs, and returns `None` when there are no active humans.
+pub fn snapshot_activity(app: &AppState) -> Option<ActivitySnapshot> {
+    let rooms: Vec<Arc<Room>> = app.rooms.read().unwrap().values().cloned().collect();
+    let mut activities = Vec::with_capacity(rooms.len());
+    for room in &rooms {
+        let data = room
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        activities.push(RoomActivity::from_data(&data));
+    }
+    aggregate_activity(&activities, now_ms())
+}
+
+/// Where the activity log lives: `CATAN_ACTIVITY_LOG` if set, otherwise
+/// `{CATAN_DATA_DIR}/analytics/activity.log`.
+pub fn activity_log_path(app: &AppState) -> PathBuf {
+    std::env::var("CATAN_ACTIVITY_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| app.data_dir.join("analytics").join("activity.log"))
+}
+
+/// Append one JSON line to the activity log, creating its directory first.
+pub fn append_activity_log(path: &Path, snapshot: &ActivitySnapshot) {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(line) = serde_json::to_string(snapshot) else {
+        return;
+    };
+    use std::io::Write;
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            if let Err(error) = writeln!(file, "{line}") {
+                tracing::warn!("activity log write failed: {error}");
+            }
+        }
+        Err(error) => tracing::warn!("could not open activity log {path:?}: {error}"),
+    }
+}
+
 pub fn data_dir_default() -> PathBuf {
     std::env::var("CATAN_DATA_DIR")
         .map(PathBuf::from)
@@ -1259,6 +1463,7 @@ mod tests {
             turn_armed_for: u64::MAX,
             bot_next_ms: 0,
             bot_key: u64::MAX,
+            connections: HashMap::new(),
         }
     }
 
@@ -2366,6 +2571,202 @@ mod tests {
         assert!(
             bad.data.is_poisoned(),
             "the bad room is skipped, not repaired"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Activity aggregation
+    // -----------------------------------------------------------------------
+
+    fn human(connections: usize) -> MemberActivity {
+        MemberActivity {
+            is_bot: false,
+            left: false,
+            connections,
+        }
+    }
+
+    fn bot(connections: usize) -> MemberActivity {
+        MemberActivity {
+            is_bot: true,
+            left: false,
+            connections,
+        }
+    }
+
+    fn activity_room(started: bool, members: Vec<MemberActivity>) -> RoomActivity {
+        RoomActivity { started, members }
+    }
+
+    #[test]
+    fn no_active_humans_produces_no_snapshot() {
+        // Nobody connected, a bot with a stream, and a left human with a stream
+        // all fail the "active human" test.
+        let rooms = vec![
+            activity_room(false, vec![human(0), bot(1)]),
+            activity_room(true, vec![MemberActivity { is_bot: false, left: true, connections: 1 }]),
+        ];
+        assert_eq!(aggregate_activity(&rooms, 0), None);
+        assert_eq!(aggregate_activity(&[], 0), None);
+    }
+
+    #[test]
+    fn one_human_alone_in_the_lobby() {
+        let snap = aggregate_activity(&[activity_room(false, vec![human(1)])], 42).unwrap();
+        assert_eq!(
+            snap,
+            ActivitySnapshot {
+                ts: 42,
+                active_humans: 1,
+                active_rooms: 1,
+                humans_only_rooms: 1,
+                with_bots_rooms: 0,
+                active_humans_vs_humans: 1,
+                active_humans_vs_bots: 0,
+                total_bots_in_active_rooms: 0,
+                active_humans_in_play: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn one_human_with_two_bots_counts_both_bots() {
+        let snap = aggregate_activity(
+            &[activity_room(true, vec![human(1), bot(0), bot(0)])],
+            0,
+        )
+        .unwrap();
+        assert_eq!(snap.active_humans, 1);
+        assert_eq!(snap.active_rooms, 1);
+        assert_eq!(snap.humans_only_rooms, 0);
+        assert_eq!(snap.with_bots_rooms, 1);
+        assert_eq!(snap.active_humans_vs_humans, 0);
+        assert_eq!(snap.active_humans_vs_bots, 1);
+        assert_eq!(snap.total_bots_in_active_rooms, 2);
+        assert_eq!(snap.active_humans_in_play, 1);
+    }
+
+    #[test]
+    fn two_humans_share_one_humans_only_room() {
+        let snap = aggregate_activity(&[activity_room(false, vec![human(1), human(2)])], 0).unwrap();
+        assert_eq!(snap.active_humans, 2);
+        assert_eq!(snap.active_rooms, 1);
+        assert_eq!(snap.humans_only_rooms, 1);
+        assert_eq!(snap.with_bots_rooms, 0);
+        assert_eq!(snap.active_humans_vs_humans, 2);
+        assert_eq!(snap.active_humans_vs_bots, 0);
+        assert_eq!(snap.total_bots_in_active_rooms, 0);
+    }
+
+    #[test]
+    fn two_humans_with_one_bot() {
+        let snap =
+            aggregate_activity(&[activity_room(true, vec![human(1), human(1), bot(0)])], 0).unwrap();
+        assert_eq!(snap.active_humans, 2);
+        assert_eq!(snap.with_bots_rooms, 1);
+        assert_eq!(snap.active_humans_vs_bots, 2);
+        assert_eq!(snap.active_humans_vs_humans, 0);
+        assert_eq!(snap.total_bots_in_active_rooms, 1);
+        assert_eq!(snap.active_humans_in_play, 2);
+    }
+
+    #[test]
+    fn rooms_are_split_between_lobby_and_play() {
+        let rooms = vec![
+            activity_room(false, vec![human(1)]),
+            activity_room(true, vec![human(1)]),
+        ];
+        let snap = aggregate_activity(&rooms, 0).unwrap();
+        assert_eq!(snap.active_humans, 2);
+        assert_eq!(snap.active_rooms, 2);
+        assert_eq!(snap.humans_only_rooms, 2);
+        assert_eq!(snap.active_humans_in_play, 1, "only the started room is in play");
+    }
+
+    #[test]
+    fn bots_and_left_seats_are_excluded_from_human_counts() {
+        let rooms = vec![activity_room(
+            true,
+            vec![
+                human(1),
+                bot(1),
+                MemberActivity { is_bot: false, left: true, connections: 1 },
+            ],
+        )];
+        let snap = aggregate_activity(&rooms, 0).unwrap();
+        assert_eq!(snap.active_humans, 1, "one real, present human");
+        assert_eq!(snap.total_bots_in_active_rooms, 1);
+    }
+
+    #[test]
+    fn multiple_streams_for_one_seat_count_as_one_human() {
+        let snap = aggregate_activity(&[activity_room(false, vec![human(3)])], 0).unwrap();
+        assert_eq!(snap.active_humans, 1);
+        assert_eq!(snap.active_humans_vs_humans, 1);
+    }
+
+    #[test]
+    fn a_room_with_no_active_human_does_not_contribute_bots_or_rooms() {
+        let rooms = vec![
+            activity_room(true, vec![human(1)]),
+            activity_room(true, vec![human(0), bot(0), bot(0)]),
+        ];
+        let snap = aggregate_activity(&rooms, 0).unwrap();
+        assert_eq!(snap.active_rooms, 1);
+        assert_eq!(snap.total_bots_in_active_rooms, 0, "idle room's bots are not counted");
+    }
+
+    #[test]
+    fn connection_refcount_tracks_each_stream_and_snapshot_sees_it() {
+        let app = test_app("activity-refcount");
+        let (room, token) = app.create_room("Al".into(), 180, false).unwrap();
+
+        assert_eq!(snapshot_activity(&app), None, "nobody is streaming yet");
+
+        let first = ConnectionGuard::new(room.clone(), token.clone());
+        let second = ConnectionGuard::new(room.clone(), token.clone());
+        assert_eq!(room.data.lock().unwrap().connections.get(&token), Some(&2));
+
+        let snap = snapshot_activity(&app).expect("a streamed seat is active");
+        assert_eq!(snap.active_humans, 1, "two tabs are still one player");
+        assert_eq!(snap.active_humans_vs_humans, 1);
+
+        drop(first);
+        assert_eq!(room.data.lock().unwrap().connections.get(&token), Some(&1));
+        assert!(snapshot_activity(&app).is_some(), "one tab still counts");
+
+        drop(second);
+        assert!(!room.data.lock().unwrap().connections.contains_key(&token));
+        assert_eq!(snapshot_activity(&app), None, "dropping the last stream clears it");
+    }
+
+    #[test]
+    fn activity_log_appends_aggregate_lines_only() {
+        let dir = std::env::temp_dir().join("catan-activity-log-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("analytics").join("activity.log");
+        let snap = ActivitySnapshot {
+            ts: 7,
+            active_humans: 1,
+            active_rooms: 1,
+            humans_only_rooms: 0,
+            with_bots_rooms: 1,
+            active_humans_vs_humans: 0,
+            active_humans_vs_bots: 1,
+            total_bots_in_active_rooms: 2,
+            active_humans_in_play: 1,
+        };
+        append_activity_log(&path, &snap);
+        append_activity_log(&path, &snap);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "append-only, one JSON object per line");
+        assert_eq!(lines[0], serde_json::to_string(&snap).unwrap());
+        let parsed: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(parsed["active_humans"], 1);
+        assert!(
+            !text.contains("Al") && !text.contains("ABCD"),
+            "the log must never contain names or room codes"
         );
     }
 

@@ -2685,6 +2685,7 @@ mod tests {
             turn_armed_for: u64::MAX,
             bot_next_ms: 0,
             bot_key: u64::MAX,
+            connections: Default::default(),
         };
         // Arm the clock exactly as the 1 Hz tick would, so the fixture has a
         // deadline that genuinely belongs to the discard phase.
