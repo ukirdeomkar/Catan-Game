@@ -64,3 +64,13 @@ signature-locked). Subjects:
 ## SVG pieces — `static/art/*.svg`
 
 Hand-authored / code-drawn vector shapes (road, settlement, city, robber). Not AI-generated.
+
+## Brand and promo art — `static/branding/*`, `branding-src/*`
+
+The logo and promo scenes (`logo-*.webp`, `og.jpg`, `landscape.webp`, `potrait.webp`) use
+the same original AI-generated painted scenes as above. During the OMK-629 Hexharbor
+rebrand, the old wordmark baked into those files was covered and re-lettered offline with
+the `HEXHARBOR` wordmark and the tagline "Build, trade, and settle a hex island with
+friends." (deterministic SVG overlay via sharp; no image-generation model). The underlying
+illustration is unchanged and still contains no official CATAN trade dress. The manifest
+launcher icons are unchanged by that rebrand.
