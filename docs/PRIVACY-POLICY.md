@@ -1,6 +1,6 @@
 # Privacy policy (Play Store listing)
 
-Play Catanou needs a public privacy-policy URL for its Google Play listing. The policy
+Hexharbor needs a public privacy-policy URL for its Google Play listing. The policy
 is served from the app itself, so it is one source of truth and stays online with the
 game.
 
@@ -9,14 +9,14 @@ game.
 | Public URL | `https://playcatanou.duckdns.org/privacy` |
 | Served from | `src/handlers.rs` → `render::privacy_page()` (`src/render.rs`) |
 | Reachable without login | yes (static server-rendered HTML) |
-| Applies to | website + Android app `org.playcatanou.twa` |
+| Applies to | website + Android app `org.hexharbor.twa` |
 | Content of record | the page itself — this doc only records the URL and the data-safety answers |
 
 ## Data-safety summary (matches the on-page policy)
 
 - **No accounts, no sign-up, no login.**
 - Collects only a player-chosen **display name** (≤ 5 chars), shown to other players in
-  the same room, plus a random **session cookie** (`catan_<ROOMCODE>`) to identify the
+  the same room, plus a random **session cookie** (named for the room code) to identify the
   player during a game.
 - Game state (board, moves) is stored server-side so games survive refreshes; rooms are
   deleted after 24 hours idle.
@@ -26,6 +26,14 @@ game.
 For the Play Console *Data safety* form, answer: no data collected/shared for advertising
 or analytics; the display name and in-game state are collected for app functionality and
 are deletable by leaving the room / automatic 24 h cleanup.
+
+## Non-affiliation (store listing)
+
+The privacy page carries this disclaimer, and the Play Store listing should repeat it in
+the app description:
+
+> Hexharbor is an independent game and is not affiliated with, endorsed by, or sponsored by
+> CATAN GmbH, Catan Studio, or Asmodee. CATAN® is a registered trademark of CATAN GmbH.
 
 When the route ships, verify:
 

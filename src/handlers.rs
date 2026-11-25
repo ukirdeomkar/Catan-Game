@@ -259,9 +259,9 @@ async fn service_worker() -> impl IntoResponse {
 }
 
 /// Package name of the Android Trusted Web Activity (TWA) built with Bubblewrap.
-const ANDROID_PACKAGE_NAME: &str = "org.playcatanou.twa";
+const ANDROID_PACKAGE_NAME: &str = "org.hexharbor.twa";
 
-/// SHA-256 fingerprints accepted for the Android TWA `org.playcatanou.twa`.
+/// SHA-256 fingerprints accepted for the Android TWA `org.hexharbor.twa`.
 ///
 /// Both are published so the app verifies regardless of how it was installed:
 /// - the **upload key** that signs our release `.aab` (used for local/side-loaded

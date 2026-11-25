@@ -1,11 +1,11 @@
-// Play Catanou service worker.
+// Hexharbor service worker.
 //
 // Its job is to make the app installable (Chrome fires `beforeinstallprompt`
 // only when a service worker with a real fetch handler controls the page) and
 // to give a small offline fallback. The game itself is live over SSE, so we
 // never cache game traffic — only the static app shell.
 
-const CACHE = "catanou-v13";
+const CACHE = "hexharbor-v13";
 
 // App-shell assets, pre-cached on install. Failures are ignored per-file so a
 // single missing asset can never wedge the worker install.

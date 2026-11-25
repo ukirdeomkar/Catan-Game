@@ -1,6 +1,6 @@
 # Android app (Play Store TWA)
 
-This is the Phase 0 Android shell for Catan-Game. It packages the existing PWA as a
+This is the Phase 0 Android shell for Hexharbor. It packages the existing PWA as a
 **Trusted Web Activity (TWA)** with [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap).
 The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org` in Chrome.
 
@@ -8,7 +8,7 @@ The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org`
 
 | Field | Value |
 |-------|-------|
-| Android package name | `org.playcatanou.twa` |
+| Android package name | `org.hexharbor.twa` |
 | Host | `playcatanou.duckdns.org` |
 | `versionCode` | `2` (launcher-icon fix, OMK-464; Play upload pending) |
 | `versionName` | `1.1.0` |
@@ -22,9 +22,10 @@ protection rejects any bundle below API 24 ("Play automatic protection requires 
 SDK version of 24 or higher"). Older devices below API 24 are therefore out of scope for
 the Play Store listing.
 
-The package name is the CEO decision recorded for issue #14 and is used consistently in
-the Bubblewrap manifest, `assetlinks.json`, and this doc. It must not change after the
-first Play upload.
+The package name is the CEO decision recorded for OMK-629 (the Hexharbor republish after the
+EU trademark takedown) and is used consistently in the Bubblewrap manifest, `assetlinks.json`,
+and this doc. It is a **new** package, so this is its first Play upload and the name must not
+change afterwards.
 
 ## Launcher icon (maskable / adaptive)
 
@@ -107,7 +108,7 @@ Bubblewrap generates the Android project from `twa-manifest.json`. To start a fr
 ```bash
 npx @bubblewrap/cli init \
   --manifest https://playcatanou.duckdns.org/static/branding/site.webmanifest
-# edit twa-manifest.json: packageId org.playcatanou.twa, signingKey path/alias,
+# edit twa-manifest.json: packageId org.hexharbor.twa, signingKey path/alias,
 # minSdkVersion 24 (Play requires >= 24), versions,
 # maskableIconUrl (icon-maskable-512.png) and backgroundColor #12181f
 npx @bubblewrap/cli build
