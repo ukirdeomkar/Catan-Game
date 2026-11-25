@@ -33,7 +33,7 @@ fn resource_color(r: Resource) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Icons — Lucide-style chrome icons (MIT) + custom Catan resource glyphs.
+// Icons — Lucide-style chrome icons (MIT) + custom hex-island resource glyphs.
 // Everything is inline SVG, so there is no font/emoji dependency and it stays
 // identical across platforms and offline.
 // ---------------------------------------------------------------------------
@@ -246,9 +246,9 @@ fn head_common(title: &str) -> Markup {
             meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
             meta name="theme-color" content="#1470a8";
             meta name="google-site-verification" content=(GOOGLE_SITE_VERIFICATION);
-            meta name="description" content="The classic game of Catan, now online to play with your friends.";
-            meta property="og:title" content="Play Catanou";
-            meta property="og:description" content="Create a room, share the code, and play Settlers of Catan with friends.";
+            meta name="description" content="Build, trade, and settle a hex island with friends.";
+            meta property="og:title" content="Hexharbor";
+            meta property="og:description" content="Create a room, share the code, and settle a hex island with friends.";
             meta property="og:image" content="/static/branding/og.jpg";
             meta property="og:type" content="website";
             title { (title) }
@@ -261,7 +261,7 @@ fn head_common(title: &str) -> Markup {
             link rel="stylesheet" href=(asset("/static/app.css"));
             meta name="apple-mobile-web-app-capable" content="yes";
             meta name="mobile-web-app-capable" content="yes";
-            meta name="apple-mobile-web-app-title" content="Play Catanou";
+            meta name="apple-mobile-web-app-title" content="Hexharbor";
             meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
             script src=(asset("/static/htmx.min.js")) defer {}
             script src=(asset("/static/sse.js")) defer {}
@@ -285,8 +285,8 @@ fn shell(title: &str, body: Markup) -> Markup {
                 header.site {
                     div.wrap {
                         a.brand href="/" {
-                            img src="/static/branding/logo-128.webp" alt="Play Catanou logo" width="42" height="42";
-                            span.bt { "Play Catanou" }
+                            img src="/static/branding/logo-128.webp" alt="Hexharbor logo" width="42" height="42";
+                            span.bt { "Hexharbor" }
                         }
                         button #audio-toggle type="button" title="Toggle sound" aria-label="Toggle sound" { "🔊" }
                     }
@@ -325,10 +325,10 @@ fn shell_game(title: &str, body: Markup) -> Markup {
 /// Landing menu: exactly three clear choices, so a new player can get started
 /// without scanning a page full of forms.
 pub fn home_page() -> Markup {
-    shell("Play Catanou", html! {
+    shell("Hexharbor", html! {
         div.wrap.page {
             div.hero {
-                p.muted { "The classic game of Catan, online with friends." }
+                p.muted { "Build, trade, and settle a hex island with friends." }
             }
             nav.card.menu aria-label="Main menu" {
                 a.btn href="/create" {
@@ -459,7 +459,7 @@ pub fn how_to_play_page(back: Option<&str>) -> Markup {
         div.wrap.page.howto {
             div.hero {
                 h1 { "How to play" }
-                p.muted { "A quick reference for Catan — from the first roll to 10 victory points." }
+                p.muted { "A quick reference for Hexharbor — from the first roll to 10 victory points." }
             }
 
             @if let Some(code) = back {
@@ -475,7 +475,7 @@ pub fn how_to_play_page(back: Option<&str>) -> Markup {
             div.card.beat {
                 (beat_head(0, "Goal"))
                 p {
-                    "Settle the island of Catan. The first player to reach "
+                    "Settle the island. The first player to reach "
                     b { "10 victory points" } " wins."
                 }
                 p.muted.small {
@@ -563,7 +563,7 @@ pub fn how_to_play_page(back: Option<&str>) -> Markup {
     })
 }
 
-/// Public privacy policy for the **Play Catanou** app (`org.playcatanou.twa`)
+/// Public privacy policy for the **Hexharbor** app (`org.hexharbor.twa`)
 /// and the website it wraps. Required by the Google Play listing and must be
 /// reachable without an account or login. Plain server-rendered HTML — no
 /// JavaScript is needed to read it. See `docs/PRIVACY-POLICY.md` for the
@@ -573,21 +573,21 @@ pub fn privacy_page() -> Markup {
         div.wrap.page.policy {
             div.hero {
                 h1 { "Privacy Policy" }
-                p.muted { "Play Catanou" }
-                p.policy-updated { "Last updated: 12 October 2026" }
+                p.muted { "Hexharbor" }
+                p.policy-updated { "Last updated: 25 November 2026" }
             }
 
             div.card {
                 h3 { "1. Who this covers" }
                 p {
                     "This policy describes how the "
-                    b { "Play Catanou" }
+                    b { "Hexharbor" }
                     " game handles information. It applies to the website at "
                     a href="/" { "playcatanou.duckdns.org" }
                     " and to the Android app "
-                    b { "Play Catanou" }
+                    b { "Hexharbor" }
                     " (package "
-                    code { "org.playcatanou.twa" }
+                    code { "org.hexharbor.twa" }
                     "), which is a Trusted Web Activity that displays that website."
                 }
             }
@@ -607,9 +607,8 @@ pub fn privacy_page() -> Markup {
                     }
                     li {
                         b { "Session cookie." }
-                        " We set one first-party cookie named "
-                        code { "catan_<ROOMCODE>" }
-                        " holding a random token so the server knows which player you are in a "
+                        " We set one first-party session cookie, named for the room, "
+                        "holding a random token so the server knows which player you are in a "
                         "particular room. It contains no personal information and is not used to "
                         "track you across sites."
                     }
@@ -638,7 +637,7 @@ pub fn privacy_page() -> Markup {
             div.card {
                 h3 { "4. Data stored on your device" }
                 p {
-                    "Play Catanou is a Progressive Web App. Its service worker caches the app's own "
+                    "Hexharbor is a Progressive Web App. Its service worker caches the app's own "
                     "files (styles, images, and game code) in your browser cache so it loads quickly, "
                     "and remembers a small preference for whether you dismissed the \u{201c}install app\u{201d} "
                     "prompt. Clearing your browser's site data removes both at any time."
@@ -685,7 +684,16 @@ pub fn privacy_page() -> Markup {
             }
 
             div.card {
-                h3 { "9. Contact" }
+                h3 { "9. Trademarks and affiliation" }
+                p {
+                    "Hexharbor is an independent game and is not affiliated with, endorsed by, "
+                    "or sponsored by CATAN GmbH, Catan Studio, or Asmodee. CATAN® is a "
+                    "registered trademark of CATAN GmbH."
+                }
+            }
+
+            div.card {
+                h3 { "10. Contact" }
                 p {
                     "Questions about this policy? Open an issue at "
                     a href="https://github.com/ukirdeomkar/Catan-Game/issues" target="_blank" rel="noopener" {
@@ -846,7 +854,7 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
 }
 
 pub fn error_page(msg: &str) -> Markup {
-    shell("Catan", html! {
+    shell("Hexharbor", html! {
         div.wrap.page {
             div.card {
                 h1 { "Oops" }
@@ -858,7 +866,7 @@ pub fn error_page(msg: &str) -> Markup {
 }
 
 pub fn join_page(code: &str) -> Markup {
-    shell("Join Catan", html! {
+    shell("Join Hexharbor", html! {
         div.wrap.page {
             div.card {
                 h1 { "Join game " code { (code) } }
@@ -981,13 +989,13 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
     let game = data.game.as_ref().expect("started game");
     let blinded = viewer.is_some_and(|v| data.viewer_blinded(v));
     let f = fragments(game, data, viewer);
-    shell_game("Catan game", html! {
+    shell_game("Hexharbor game", html! {
         div #app hx-ext="sse" sse-connect=(format!("/room/{code}/events")) {
             div #toasts.toasts {}
             div #notif.notif {}
             div.pwa-titlebar {
-                img src="/static/branding/logo-128.webp" alt="Play Catanou" width="20" height="20";
-                span { "Play Catanou" }
+                img src="/static/branding/logo-128.webp" alt="Hexharbor" width="20" height="20";
+                span { "Hexharbor" }
             }
             div #status.topbar sse-swap="status" { (f.status) }
             div #players.pstrip sse-swap="players" { (f.players) }

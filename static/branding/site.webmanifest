@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Play Catanou",
-  "short_name": "Play Catanou",
-  "description": "The classic game of Catan, now online to play with your friends.",
+  "name": "Hexharbor",
+  "short_name": "Hexharbor",
+  "description": "Build, trade, and settle a hex island with friends.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
