@@ -98,6 +98,413 @@ jobs:
             docker compose pull catan
             docker compose up -d
 
+            echo "=== OMK-646: add hexports.duckdns.org Traefik route (additive, idempotent) ==="
+            TRAEFIK_DYNAMIC_DIR="$(docker inspect traefik --format '{{range .Mounts}}{{if eq .Destination "/dynamic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+            if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ]; then
+              TRAEFIK_DYNAMIC_DIR=/root/traefik/dynamic
+              echo "WARN: traefik /dynamic mount not found; falling back to ${TRAEFIK_DYNAMIC_DIR}"
+            fi
+            if [ ! -d "${TRAEFIK_DYNAMIC_DIR}" ]; then
+              echo "ERROR: Traefik dynamic dir '${TRAEFIK_DYNAMIC_DIR}' does not exist; refusing to write a broken hexports route" >&2
+              exit 1
+            fi
+            echo "Traefik dynamic dir: ${TRAEFIK_DYNAMIC_DIR}"
+            HEXPORTS_DYNAMIC_FILE="${TRAEFIK_DYNAMIC_DIR}/hexports.yml"
+            if python3 - "${TRAEFIK_DYNAMIC_DIR}" "${HEXPORTS_DYNAMIC_FILE}" <<'HEXPORTS_PY'
+            #!/usr/bin/env python3
+            """Add an additive Traefik (file provider) route for hexports.duckdns.org.
+
+            Usage: write_hexports_route.py <traefik-dynamic-dir> <output-file>
+
+            The script never edits or removes existing dynamic files. It writes only the
+            output file (normally <dynamic-dir>/hexports.yml), reusing the service that
+            backs the playcatanou.duckdns.org router. If that service cannot be resolved it
+            exits non-zero instead of publishing a broken route.
+            """
+
+            import glob
+            import os
+            import re
+            import sys
+            import tempfile
+
+            ROUTER_NAME = "catan-hexports"
+            SERVICE_NAME = "catan-hexports"
+            HOST = "hexports.duckdns.org"
+            CANONICAL_HOST = "playcatanou.duckdns.org"
+            CERT_RESOLVER = "duckdns"
+            NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+            URL_RE = re.compile(r"^https?://[^\s\"']+$")
+
+            try:
+                import yaml  # type: ignore
+
+                HAVE_YAML = True
+            except Exception:  # pragma: no cover - exercised on hosts without PyYAML
+                yaml = None
+                HAVE_YAML = False
+
+
+            def die(message):
+                print("ERROR: " + message, file=sys.stderr)
+                sys.exit(2)
+
+
+            def note(message):
+                print(message, file=sys.stderr)
+
+
+            def dynamic_files(dynamic_dir, target_path):
+                """All .yml/.yaml files in the dynamic dir except the file we manage."""
+                target = os.path.realpath(target_path)
+                seen = set()
+                paths = []
+                for pattern in ("*.yml", "*.yaml"):
+                    for path in sorted(glob.glob(os.path.join(dynamic_dir, pattern))):
+                        real = os.path.realpath(path)
+                        if real == target or real in seen:
+                            continue
+                        seen.add(real)
+                        paths.append(path)
+                return paths
+
+
+            def load_yaml_files(dynamic_dir, target_path):
+                docs = []
+                for path in dynamic_files(dynamic_dir, target_path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as handle:
+                            data = yaml.safe_load(handle)
+                    except Exception as exc:
+                        note("WARN: skipping unparseable dynamic file %s: %s" % (path, exc))
+                        continue
+                    if isinstance(data, dict):
+                        docs.append((path, data))
+                return docs
+
+
+            def discover_yaml(docs):
+                """Return (service_name, server_url) for the playcatanou router.
+
+                Several routers may mention the host (for example a redirect router using
+                noop@internal); prefer the first candidate whose service resolves to a
+                reachable server URL.
+                """
+                candidates = []
+                for _path, data in docs:
+                    http = data.get("http")
+                    routers = http.get("routers") if isinstance(http, dict) else None
+                    if not isinstance(routers, dict):
+                        continue
+                    for router in routers.values():
+                        if not isinstance(router, dict):
+                            continue
+                        if CANONICAL_HOST not in str(router.get("rule") or ""):
+                            continue
+                        service = router.get("service")
+                        if isinstance(service, str) and service.strip():
+                            name = service.strip()
+                            if name not in candidates:
+                                candidates.append(name)
+
+                if not candidates:
+                    return None, None
+
+                first_name = candidates[0]
+                for candidate in candidates:
+                    for _path, data in docs:
+                        http = data.get("http")
+                        services = http.get("services") if isinstance(http, dict) else None
+                        if not isinstance(services, dict):
+                            continue
+                        config = services.get(candidate)
+                        if not isinstance(config, dict):
+                            continue
+                        load_balancer = config.get("loadBalancer")
+                        servers = load_balancer.get("servers") if isinstance(load_balancer, dict) else None
+                        if not isinstance(servers, list):
+                            continue
+                        for server in servers:
+                            if isinstance(server, dict):
+                                url = server.get("url")
+                                if isinstance(url, str) and url.strip():
+                                    return candidate, url.strip()
+                return first_name, None
+
+
+            def yaml_collisions(docs, define_service):
+                sections = ["routers", "middlewares"]
+                if define_service:
+                    sections.append("services")
+                hits = []
+                for path, data in docs:
+                    http = data.get("http")
+                    if not isinstance(http, dict):
+                        continue
+                    for section in sections:
+                        definitions = http.get(section)
+                        if isinstance(definitions, dict) and ROUTER_NAME in definitions:
+                            hits.append("%s.%s in %s" % (section, ROUTER_NAME, path))
+                return hits
+
+
+            def mapping_entries(lines):
+                entries = []
+                for index, raw in enumerate(lines):
+                    stripped = raw.strip()
+                    if not stripped or stripped.startswith("#") or stripped.startswith("---"):
+                        continue
+                    indent = len(raw) - len(raw.lstrip(" "))
+                    if stripped.startswith("- "):
+                        stripped = stripped[2:].lstrip()
+                    if ":" not in stripped:
+                        continue
+                    key, _, value = stripped.partition(":")
+                    entries.append(
+                        {
+                            "index": index,
+                            "indent": indent,
+                            "key": key.strip(),
+                            "value": value.strip().strip('"').strip("'"),
+                        }
+                    )
+                return entries
+
+
+            def enclosing_key(entries, position):
+                indent = entries[position]["indent"]
+                for back in range(position - 1, -1, -1):
+                    candidate = entries[back]
+                    if candidate["indent"] < indent and candidate["value"] == "":
+                        return candidate["key"]
+                return None
+
+
+            def block_slice(entries, position):
+                indent = entries[position]["indent"]
+                start = entries[position]["index"]
+                end = None
+                for candidate in entries[position + 1:]:
+                    if candidate["indent"] <= indent:
+                        end = candidate["index"]
+                        break
+                return start, end
+
+
+            def discover_simple(dynamic_dir, target_path):
+                """Indentation-aware fallback for hosts without PyYAML."""
+                candidates = []
+                for path in dynamic_files(dynamic_dir, target_path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as handle:
+                            entries = mapping_entries(handle.read().splitlines())
+                    except OSError as exc:
+                        note("WARN: cannot read dynamic file %s: %s" % (path, exc))
+                        continue
+                    for position, entry in enumerate(entries):
+                        if entry["key"] != "rule" or CANONICAL_HOST not in entry["value"]:
+                            continue
+                        router_position = None
+                        for back in range(position - 1, -1, -1):
+                            candidate = entries[back]
+                            if candidate["indent"] < entry["indent"] and candidate["value"] == "":
+                                router_position = back
+                                break
+                        if router_position is None:
+                            continue
+                        start, end = block_slice(entries, router_position)
+                        for inner in entries[router_position + 1:]:
+                            if end is not None and inner["index"] >= end:
+                                break
+                            if inner["key"] == "service" and inner["value"]:
+                                if inner["value"] not in candidates:
+                                    candidates.append(inner["value"])
+                                break
+
+                if not candidates:
+                    return None, None
+
+                first_name = candidates[0]
+                for candidate in candidates:
+                    for path in dynamic_files(dynamic_dir, target_path):
+                        try:
+                            with open(path, "r", encoding="utf-8") as handle:
+                                entries = mapping_entries(handle.read().splitlines())
+                        except OSError:
+                            continue
+                        for position, entry in enumerate(entries):
+                            if entry["key"] != candidate or entry["value"] != "":
+                                continue
+                            if enclosing_key(entries, position) != "services":
+                                continue
+                            start, end = block_slice(entries, position)
+                            for inner in entries[position + 1:]:
+                                if end is not None and inner["index"] >= end:
+                                    break
+                                if inner["key"] == "url" and inner["value"]:
+                                    return candidate, inner["value"]
+                return first_name, None
+
+
+            def simple_collisions(dynamic_dir, target_path, define_service):
+                parents = ("routers", "middlewares")
+                if define_service:
+                    parents = parents + ("services",)
+                hits = []
+                for path in dynamic_files(dynamic_dir, target_path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as handle:
+                            entries = mapping_entries(handle.read().splitlines())
+                    except OSError:
+                        continue
+                    for position, entry in enumerate(entries):
+                        if entry["key"] == ROUTER_NAME and entry["value"] == "":
+                            parent = enclosing_key(entries, position)
+                            if parent in parents:
+                                hits.append("%s.%s in %s" % (parent, ROUTER_NAME, path))
+                return hits
+
+
+            def render_without_yaml(mode, service_name, url):
+                lines = [
+                    "http:",
+                    "  routers:",
+                    "    %s:" % ROUTER_NAME,
+                    '      rule: "Host(`%s`)"' % HOST,
+                    '      entryPoints: ["websecure"]',
+                    "      service: %s" % ("catan-hexports" if mode == "new" else service_name),
+                    "      tls:",
+                    "        certResolver: %s" % CERT_RESOLVER,
+                ]
+                if mode == "new":
+                    lines += [
+                        "  services:",
+                        "    %s:" % SERVICE_NAME,
+                        "      loadBalancer:",
+                        "        servers:",
+                        '          - url: "%s"' % url,
+                    ]
+                return "\n".join(lines) + "\n"
+
+
+            def validate_simple(text, mode, service_name, url):
+                if not text.startswith("http:\n  routers:\n"):
+                    die("internal error: rendered config is missing the http.routers root")
+                if ROUTER_NAME + ":" not in text or "rule:" not in text or HOST not in text:
+                    die("internal error: rendered config is missing the hexports router")
+                if service_name not in text and mode != "new":
+                    die("internal error: reused service name missing from rendered config")
+                if mode == "new" and (url not in text or SERVICE_NAME + ":" not in text):
+                    die("internal error: new service block missing from rendered config")
+
+
+            def main():
+                if len(sys.argv) != 3:
+                    die("usage: write_hexports_route.py <dynamic-dir> <output-file>")
+                dynamic_dir = os.path.abspath(sys.argv[1])
+                target_path = os.path.abspath(sys.argv[2])
+                if not os.path.isdir(dynamic_dir):
+                    die("Traefik dynamic dir does not exist: %s" % dynamic_dir)
+
+                if HAVE_YAML:
+                    docs = load_yaml_files(dynamic_dir, target_path)
+                    service_name, url = discover_yaml(docs)
+                else:
+                    note("WARN: PyYAML is not installed; using the built-in scoped parser")
+                    docs = None
+                    service_name, url = discover_simple(dynamic_dir, target_path)
+
+                if not service_name and not url:
+                    die(
+                        "could not find a router for %s in %s; not writing a route"
+                        % (CANONICAL_HOST, dynamic_dir)
+                    )
+                if not service_name:
+                    die("found a %s router but its service could not be read" % CANONICAL_HOST)
+                if not url:
+                    die(
+                        "found router service %r for %s but no loadBalancer.servers[].url; "
+                        "not writing a route" % (service_name, CANONICAL_HOST)
+                    )
+
+                reusable = bool(NAME_RE.match(service_name)) and "@" not in service_name
+                mode = "reuse" if reusable else "new"
+                if mode == "new":
+                    if not URL_RE.match(url):
+                        die("service target %r is not a valid server URL; not writing a route" % url)
+                    note(
+                        "INFO: service %r cannot be reused safely; writing a dedicated %s service"
+                        % (service_name, SERVICE_NAME)
+                    )
+
+                if HAVE_YAML:
+                    collisions = yaml_collisions(docs, define_service=(mode == "new"))
+                else:
+                    collisions = simple_collisions(
+                        dynamic_dir, target_path, define_service=(mode == "new")
+                    )
+                if collisions:
+                    die("refusing to write, %s already defined elsewhere: %s" % (ROUTER_NAME, ", ".join(collisions)))
+
+                router = {
+                    "rule": "Host(`%s`)" % HOST,
+                    "entryPoints": ["websecure"],
+                    "service": SERVICE_NAME if mode == "new" else service_name,
+                    "tls": {"certResolver": CERT_RESOLVER},
+                }
+                config = {"http": {"routers": {ROUTER_NAME: router}}}
+                if mode == "new":
+                    config["http"]["services"] = {
+                        SERVICE_NAME: {"loadBalancer": {"servers": [{"url": url}]}}
+                    }
+
+                if HAVE_YAML:
+                    rendered = yaml.safe_dump(config, sort_keys=False)
+                    if yaml.safe_load(rendered) != config:
+                        die("internal error: rendered YAML did not round-trip")
+                else:
+                    rendered = render_without_yaml(mode, service_name, url)
+                    validate_simple(rendered, mode, service_name, url)
+
+                directory = os.path.dirname(target_path)
+                descriptor, temp_path = tempfile.mkstemp(prefix=".hexports.", suffix=".tmp", dir=directory)
+                try:
+                    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                        handle.write(rendered)
+                    os.replace(temp_path, target_path)
+                except Exception as exc:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+                    die("failed to write %s: %s" % (target_path, exc))
+
+                if HAVE_YAML:
+                    with open(target_path, "r", encoding="utf-8") as handle:
+                        yaml.safe_load(handle)
+
+                print(
+                    "Wrote %s (mode=%s, service=%s, target=%s)"
+                    % (target_path, "reuse" if mode == "reuse" else "new", router["service"], url)
+                )
+
+
+            if __name__ == "__main__":
+                main()
+            HEXPORTS_PY
+            then
+              echo "hexports Traefik route is in place: ${HEXPORTS_DYNAMIC_FILE}"
+            else
+              echo "ERROR: could not add the hexports Traefik route; refusing to continue" >&2
+              exit 1
+            fi
+
+            echo "--- hexports/playcatanou smoke check (non-fatal; Traefik watch + ACME may lag) ---"
+            sleep 10
+            curl -sSI --max-time 20 https://hexports.duckdns.org/ || true
+            curl -sSI --max-time 20 https://playcatanou.duckdns.org/ || true
+
+
             echo "=== TRAEFIK PROBE START ==="
             echo "--- docker ps (name, image, ports) ---"
             docker ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}' 2>&1 || true
