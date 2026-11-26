@@ -7,7 +7,7 @@ on:
 
 env:
   IMAGE_NAME: ghcr.io/ukirdeomkar/catan-game
-  DUCKDNS_SUBDOMAIN: playcatanou
+  DUCKDNS_SUBDOMAIN: playcatanou,hexports
 
 jobs:
   build-and-deploy:
@@ -97,4 +97,28 @@ jobs:
             chown 10001:10001 data
             docker compose pull catan
             docker compose up -d
+
+            echo "=== TRAEFIK PROBE START ==="
+            echo "--- docker ps (name, image, ports) ---"
+            docker ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}' 2>&1 || true
+
+            TRAEFIK_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -i traefik | head -n 1 || true)"
+            if [ -n "${TRAEFIK_CONTAINER:-}" ]; then
+              echo "--- traefik container: ${TRAEFIK_CONTAINER} ---"
+              echo "--- .Config.Cmd ---"
+              docker inspect "${TRAEFIK_CONTAINER}" --format '{{json .Config.Cmd}}' 2>&1 | sed -E 's/(token|password|secret|key)[^,}"]*/\1=<redacted>/Ig' || true
+              echo "--- .Mounts ---"
+              docker inspect "${TRAEFIK_CONTAINER}" --format '{{json .Mounts}}' 2>&1 | sed -E 's/(token|password|secret|key)[^,}"]*/\1=<redacted>/Ig' || true
+              echo "--- .NetworkSettings.Networks ---"
+              docker inspect "${TRAEFIK_CONTAINER}" --format '{{json .NetworkSettings.Networks}}' 2>&1 | sed -E 's/(token|password|secret|key)[^,}"]*/\1=<redacted>/Ig' || true
+              echo "--- .Config.Labels ---"
+              docker inspect "${TRAEFIK_CONTAINER}" --format '{{json .Config.Labels}}' 2>&1 | sed -E 's/(token|password|secret|key)[^,}"]*/\1=<redacted>/Ig' || true
+            else
+              echo "--- no traefik container found ---"
+            fi
+
+            echo "--- traefik file names under /root and /etc (names only, contents never read) ---"
+            find /root /etc -maxdepth 4 -iname '*traefik*' -type f 2>/dev/null || true
+            echo "=== TRAEFIK PROBE END ==="
+
             docker image prune -f
