@@ -189,7 +189,7 @@ fn public_base_url() -> String {
         .ok()
         .map(|url| url.trim().trim_end_matches('/').to_string())
         .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
-        .unwrap_or_else(|| "https://hexports.duckdns.org".to_string())
+        .unwrap_or_else(|| "https://playcatanou.duckdns.org".to_string())
 }
 
 /// Crawler policy. Live rooms are private to the players who hold the code, so
@@ -259,9 +259,9 @@ async fn service_worker() -> impl IntoResponse {
 }
 
 /// Package name of the Android Trusted Web Activity (TWA) built with Bubblewrap.
-const ANDROID_PACKAGE_NAME: &str = "org.hexports.twa";
+const ANDROID_PACKAGE_NAME: &str = "org.playcatanou.twa";
 
-/// SHA-256 fingerprints accepted for the Android TWA `org.hexports.twa`.
+/// SHA-256 fingerprints accepted for the Android TWA `org.playcatanou.twa`.
 ///
 /// Both are published so the app verifies regardless of how it was installed:
 /// - the **upload key** that signs our release `.aab` (used for local/side-loaded
@@ -1292,7 +1292,7 @@ fn cleared() -> Response {
             (header::HeaderName::from_static("hx-reswap"), "none"),
             (
                 header::HeaderName::from_static("hx-trigger-after-swap"),
-                "hexports:clear-toasts",
+                "catan:clear-toasts",
             ),
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
         ],
@@ -1364,7 +1364,7 @@ mod tests {
         assert_eq!(res.headers().get("hx-reswap").unwrap(), "none");
         assert_eq!(
             res.headers().get("hx-trigger-after-swap").unwrap(),
-            "hexports:clear-toasts",
+            "catan:clear-toasts",
             "htmx dispatches this event on <body> when the trigger was detached"
         );
         assert!(
@@ -2428,7 +2428,7 @@ mod tests {
             "arrow-key JS must be an external script so the CSP allows it"
         );
         assert!(
-            !body.contains("__hexportsReplayKeys"),
+            !body.contains("__catanReplayKeys"),
             "the replay page must not emit inline JS that `script-src 'self'` blocks"
         );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());

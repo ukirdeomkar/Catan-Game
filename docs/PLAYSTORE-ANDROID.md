@@ -2,7 +2,7 @@
 
 This is the Phase 0 Android shell for Hex Ports. It packages the existing PWA as a
 **Trusted Web Activity (TWA)** with [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap).
-The Rust backend is unchanged; the TWA renders `https://hexports.duckdns.org` in Chrome.
+The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org` in Chrome.
 
 ## Play Store listing copy
 
@@ -47,8 +47,8 @@ Build, trade, and settle your island - grab the best ports and win.
 
 | Field | Value |
 |-------|-------|
-| Android package name | `org.hexports.twa` |
-| Host | `hexports.duckdns.org` |
+| Android package name | `org.playcatanou.twa` |
+| Host | `playcatanou.duckdns.org` |
 | `versionCode` | `2` (launcher-icon fix, OMK-464; Play upload pending) |
 | `versionName` | `1.1.0` |
 | `minSdkVersion` | 24 |
@@ -61,10 +61,11 @@ protection rejects any bundle below API 24 ("Play automatic protection requires 
 SDK version of 24 or higher"). Older devices below API 24 are therefore out of scope for
 the Play Store listing.
 
-The package name is the board decision recorded for OMK-636 (the Hex Ports rebrand that
-replaced the earlier provisional name) and is used consistently in the Bubblewrap manifest,
-`assetlinks.json`, and this doc. It is a **new** package, so this is its first Play upload and
-the name must not change afterwards.
+The package name is the **existing published app's** package, kept unchanged for OMK-636 so
+Google Play treats the Hex Ports rebrand as an **update to the same listing**, not a new app.
+It is used consistently in the Bubblewrap manifest, `assetlinks.json`, and this doc. The host
+also stays `playcatanou.duckdns.org` for the same reason: the TWA must keep serving the URL
+already verified for the installed app. Only the display name, artwork, and copy change.
 
 ## Launcher icon (maskable / adaptive)
 
@@ -88,7 +89,7 @@ dark wooden frame, never the logo.
 The generated Android project must opt into them. After `bubblewrap init`, edit
 `twa-manifest.json`:
 
-- `"maskableIconUrl": "https://hexports.duckdns.org/static/branding/icon-maskable-512.png"`
+- `"maskableIconUrl": "https://playcatanou.duckdns.org/static/branding/icon-maskable-512.png"`
 - `"backgroundColor": "#12181f"`
 
 If the generated project hardcodes a white `ic_launcher_background` (Bubblewrap versions
@@ -137,7 +138,7 @@ rotate a certificate.
 Verify with:
 
 ```bash
-curl -s https://hexports.duckdns.org/.well-known/assetlinks.json
+curl -s https://playcatanou.duckdns.org/.well-known/assetlinks.json
 ```
 
 ## Rebuilding the bundle
@@ -146,8 +147,8 @@ Bubblewrap generates the Android project from `twa-manifest.json`. To start a fr
 
 ```bash
 npx @bubblewrap/cli init \
-  --manifest https://hexports.duckdns.org/static/branding/site.webmanifest
-# edit twa-manifest.json: packageId org.hexports.twa, signingKey path/alias,
+  --manifest https://playcatanou.duckdns.org/static/branding/site.webmanifest
+# edit twa-manifest.json: packageId org.playcatanou.twa, signingKey path/alias,
 # minSdkVersion 24 (Play requires >= 24), versions,
 # maskableIconUrl (icon-maskable-512.png) and backgroundColor #12181f
 npx @bubblewrap/cli build

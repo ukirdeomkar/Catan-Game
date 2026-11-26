@@ -6,10 +6,10 @@ game.
 
 | Field | Value |
 |-------|-------|
-| Public URL | `https://hexports.duckdns.org/privacy` |
+| Public URL | `https://playcatanou.duckdns.org/privacy` |
 | Served from | `src/handlers.rs` → `render::privacy_page()` (`src/render.rs`) |
 | Reachable without login | yes (static server-rendered HTML) |
-| Applies to | website + Android app `org.hexports.twa` |
+| Applies to | website + Android app `org.playcatanou.twa` |
 | Content of record | the page itself — this doc only records the URL and the data-safety answers |
 
 ## Data-safety summary (matches the on-page policy)
@@ -39,6 +39,6 @@ CATAN trademark and the listing copy is mechanics-only:
 When the route ships, verify:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://hexports.duckdns.org/privacy
-curl -sS https://hexports.duckdns.org/privacy | grep -i 'Privacy Policy'
+curl -sS -o /dev/null -w '%{http_code}\n' https://playcatanou.duckdns.org/privacy
+curl -sS https://playcatanou.duckdns.org/privacy | grep -i 'Privacy Policy'
 ```

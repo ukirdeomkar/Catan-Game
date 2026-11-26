@@ -3,8 +3,8 @@
 A small, self-hosted multiplayer **hex-and-trade board game**. Rust backend, server-rendered
 HTML + SVG board, live updates over SSE. No JavaScript framework, no database, no bloat.
 
-**Play it now: <https://hexports.duckdns.org>** — or install the Android app from
-**[Google Play](https://play.google.com/store/apps/details?id=org.hexports.twa)**.
+**Play it now: <https://playcatanou.duckdns.org>** — or install the Android app from
+**[Google Play](https://play.google.com/store/apps/details?id=org.playcatanou.twa)**.
 
 ---
 
@@ -125,7 +125,7 @@ The service binds to `127.0.0.1:8080`. Put a reverse proxy in front for HTTPS.
 SSE needs proxying to be disabled and long timeouts. Caddy:
 
 ```
-hexports.example.com {
+hex-ports.example.com {
     reverse_proxy 127.0.0.1:8080 {
         flush_interval -1
     }
@@ -163,12 +163,12 @@ Everything is server-authoritative, so there is no way to cheat from the client.
 ### Install it as an app (Android / PWA)
 
 Hex Ports is on **Google Play** for Android:
-<https://play.google.com/store/apps/details?id=org.hexports.twa>
+<https://play.google.com/store/apps/details?id=org.playcatanou.twa>
 
 The site is also an installable Progressive Web App. Open it over HTTPS and install from the
 browser — an in-app **Install** button appears when the browser says it's installable:
 
-- **Android (Chrome):** install from [Google Play](https://play.google.com/store/apps/details?id=org.hexports.twa),
+- **Android (Chrome):** install from [Google Play](https://play.google.com/store/apps/details?id=org.playcatanou.twa),
   or menu ⋮ → **Install app** (or the in-app **Install** button).
 - **iPhone/iPad (Safari):** **Share** → **Add to Home Screen**.
 - **Desktop (Chrome/Edge):** install icon in the address bar, or menu → **Install**.

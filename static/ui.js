@@ -89,11 +89,11 @@
   document.addEventListener("htmx:afterSwap", onBump);
 
   // ---- Error toast clearing ------------------------------------------------
-  // A successful action returns `HX-Trigger-After-Swap: hexports:clear-toasts`.
+  // A successful action returns `HX-Trigger-After-Swap: catan:clear-toasts`.
   // htmx dispatches that event on <body> when the SSE swap detached the
   // element that started the request, so the clear still lands even though an
   // out-of-band `#toasts` swap would have had no target.
-  document.addEventListener("hexports:clear-toasts", function () {
+  document.addEventListener("catan:clear-toasts", function () {
     var box = document.getElementById("toasts");
     if (box) box.innerHTML = "";
   });
@@ -182,7 +182,7 @@
   // (SSE reconnects never reload the script, so the in-memory value is enough
   // there; this covers an explicit refresh during the in-flight window.)
   function autoRollStoreKey() {
-    return "hexports-auto-roll:" + window.location.pathname;
+    return "catan-auto-roll:" + window.location.pathname;
   }
   function readAutoRollTurn() {
     try {

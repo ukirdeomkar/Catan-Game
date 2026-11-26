@@ -24,7 +24,7 @@
 
   function dismissed() {
     try {
-      return localStorage.getItem("hexports_install_dismissed") === "1";
+      return localStorage.getItem("catan_install_dismissed") === "1";
     } catch (e) {
       return false;
     }
@@ -53,7 +53,7 @@
     });
     bar.querySelector("#install-close").addEventListener("click", function () {
       try {
-        localStorage.setItem("hexports_install_dismissed", "1");
+        localStorage.setItem("catan_install_dismissed", "1");
       } catch (e) {}
       hide();
     });

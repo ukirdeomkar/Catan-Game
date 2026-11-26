@@ -7,7 +7,7 @@ on:
 
 env:
   IMAGE_NAME: ghcr.io/ukirdeomkar/catan-game
-  DUCKDNS_SUBDOMAIN: hexports
+  DUCKDNS_SUBDOMAIN: playcatanou
 
 jobs:
   build-and-deploy:
@@ -75,7 +75,6 @@ jobs:
                 environment:
                   CATAN_ADDR: 0.0.0.0:8080
                   CATAN_DATA_DIR: /data
-                  CATAN_PUBLIC_URL: https://hexports.duckdns.org
                 volumes:
                   - ./data:/data
                 healthcheck:

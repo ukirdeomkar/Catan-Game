@@ -563,7 +563,7 @@ pub fn how_to_play_page(back: Option<&str>) -> Markup {
     })
 }
 
-/// Public privacy policy for the **Hex Ports** app (`org.hexports.twa`)
+/// Public privacy policy for the **Hex Ports** app (`org.playcatanou.twa`)
 /// and the website it wraps. Required by the Google Play listing and must be
 /// reachable without an account or login. Plain server-rendered HTML — no
 /// JavaScript is needed to read it. See `docs/PRIVACY-POLICY.md` for the
@@ -583,11 +583,11 @@ pub fn privacy_page() -> Markup {
                     "This policy describes how the "
                     b { "Hex Ports" }
                     " game handles information. It applies to the website at "
-                    a href="/" { "hexports.duckdns.org" }
+                    a href="/" { "playcatanou.duckdns.org" }
                     " and to the Android app "
                     b { "Hex Ports" }
                     " (package "
-                    code { "org.hexports.twa" }
+                    code { "org.playcatanou.twa" }
                     "), which is a Trusted Web Activity that displays that website."
                 }
             }

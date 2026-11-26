@@ -68,9 +68,9 @@ Hand-authored / code-drawn vector shapes (road, settlement, city, robber). Not A
 ## Brand and promo art — `static/branding/*`, `branding-src/*`
 
 The logo and promo scenes (`logo-128.webp`, `logo-512.webp`, `og.jpg`, and the
-launcher icons) derive from the board-supplied `branding-src/hexports-logo.png` emblem (1408x768
+launcher icons) derive from the board-supplied `branding-src/hex-ports-logo.png` emblem (1408x768
 PNG reading "HEX PORTS — BOARD STRATEGY GAME"). During the OMK-636 Hex Ports rebrand, the
-`branding-src/hexports-logo.png` art was cropped and composited onto a `#12181f` background to
+`branding-src/hex-ports-logo.png` art was cropped and composited onto a `#12181f` background to
 produce the header emblem, PWA launcher icons, maskable icons, favicons, Apple touch icon, and
 the 1200x630 Open Graph image (deterministic crop/mask/composite via sharp; no image-generation
 model). The underlying illustration is unchanged and contains no third-party trade dress.

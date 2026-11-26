@@ -5,7 +5,7 @@
 // to give a small offline fallback. The game itself is live over SSE, so we
 // never cache game traffic — only the static app shell.
 
-const CACHE = "hexports-v13";
+const CACHE = "catan-v14";
 
 // App-shell assets, pre-cached on install. Failures are ignored per-file so a
 // single missing asset can never wedge the worker install.
