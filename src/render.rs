@@ -244,7 +244,7 @@ fn head_common(title: &str) -> Markup {
             // hit-testing uses the full screen, so every tap lands slightly
             // down-right of the finger. In a browser tab the tag is a no-op.
             meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
-            meta name="theme-color" content="#1470a8";
+            meta name="theme-color" content="#8c1c13";
             meta name="google-site-verification" content=(GOOGLE_SITE_VERIFICATION);
             meta name="description" content="Build, trade, and settle a hex island with friends.";
             meta property="og:title" content="Hex Ports";

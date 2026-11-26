@@ -11,7 +11,7 @@ name, brand, or "inspired by" phrasing appears anywhere in the metadata.
 
 **App name (title):** `Hex Ports`
 
-**Short description (57 / 80 chars):** `Build, trade, and settle a hex island with friends online.`
+**Short description (58 / 80 chars):** `Build, trade, and settle a hex island with friends online.`
 
 **Full description:**
 
@@ -78,13 +78,13 @@ The repo now ships maskable artwork alongside the existing `any` icons:
 
 | Asset | Contents |
 |-------|----------|
-| `static/branding/icon-maskable-192.png` | 192x192, full-bleed `#12181f`, logo at 66% |
-| `static/branding/icon-maskable-512.png` | 512x512, full-bleed `#12181f`, logo at 66% |
+| `static/branding/icon-maskable-192.png` | 192x192, full-bleed `#12181f`, logo at ~80% |
+| `static/branding/icon-maskable-512.png` | 512x512, full-bleed `#12181f`, logo at ~80% |
 
 Both are declared in `static/branding/site.webmanifest` with `"purpose": "maskable"`; the
-`any` and `apple-touch` icons are unchanged. The artwork is scaled to 66% so the plaque
-stays inside the adaptive-icon safe zone — a circular or squircle mask crops only the
-dark wooden frame, never the logo.
+`any` and `apple-touch` icons are unchanged. The artwork occupies ~80% of the canvas,
+sitting at the adaptive-icon 80% safe-zone boundary; it is centered on `#12181f` and not
+clipped — a circular or squircle mask crops only the dark wooden frame, never the logo.
 
 The generated Android project must opt into them. After `bubblewrap init`, edit
 `twa-manifest.json`:
