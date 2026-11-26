@@ -49,8 +49,8 @@ Build, trade, and settle your island - grab the best ports and win.
 |-------|-------|
 | Android package name | `org.playcatanou.twa` |
 | Host | `playcatanou.duckdns.org` |
-| `versionCode` | `2` (launcher-icon fix, OMK-464; Play upload pending) |
-| `versionName` | `1.1.0` |
+| `versionCode` | `3` (Hex Ports update, OMK-644; Play upload pending) |
+| `versionName` | `1.2.0` |
 | `minSdkVersion` | 24 |
 | `targetSdkVersion` | 36 (set by the Bubblewrap/AGP template) |
 | Keystore alias | `catanou-upload` |
