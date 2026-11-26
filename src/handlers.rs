@@ -2,6 +2,7 @@ use crate::game::actions::Action;
 use crate::game::resources::{Bundle, Resource};
 use crate::game::state::{BotLevel, GameState, MAX_PLAYERS};
 use crate::render;
+use crate::seo::{noindex_enabled, public_base_url};
 use crate::state::{
     AppState, ConnectionGuard, JoinError, Layout, LeaveChoice, Room, SeatOutcome, ViewMode, now_ms,
 };
@@ -95,6 +96,14 @@ async fn security_headers(req: Request, next: Next) -> Response {
         header::HeaderName::from_static("permissions-policy"),
         HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
     );
+    // A staging host must never be indexed. `robots.txt` also disallows it, but
+    // a header applies even to a page a crawler already has a URL for.
+    if noindex_enabled() {
+        headers.insert(
+            header::HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex, nofollow"),
+        );
+    }
     res
 }
 
@@ -178,28 +187,14 @@ fn is_proxy_peer(ip: IpAddr) -> bool {
     }
 }
 
-/// Canonical public origin for absolute URLs (`robots.txt`, `/sitemap.xml`).
-///
-/// Staging runs the same binary on a different host. Absolute URLs always point
-/// at production so a crawler that finds a preview build is sent to the real
-/// site instead of a duplicate; moving to a real domain is one environment
-/// change (`CATAN_PUBLIC_URL`) rather than an edit in several files.
-fn public_base_url() -> String {
-    std::env::var("CATAN_PUBLIC_URL")
-        .ok()
-        .map(|url| url.trim().trim_end_matches('/').to_string())
-        .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
-        .unwrap_or_else(|| "https://playcatanou.duckdns.org".to_string())
-}
-
 /// Crawler policy. Live rooms are private to the players who hold the code, so
 /// they are excluded; the public pages stay crawlable. The `Sitemap:` line is
 /// how a crawler discovers `/sitemap.xml` without being told out of band.
+///
+/// A staging instance (`CATAN_NOINDEX`) disallows everything instead, so the
+/// preview host cannot compete with production as duplicate content.
 async fn robots() -> impl IntoResponse {
-    let body = format!(
-        "User-agent: *\nAllow: /\nDisallow: /room/\n\nSitemap: {}/sitemap.xml\n",
-        public_base_url()
-    );
+    let body = robots_body(noindex_enabled(), &public_base_url());
     (
         [
             (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
@@ -207,6 +202,17 @@ async fn robots() -> impl IntoResponse {
         ],
         body,
     )
+}
+
+/// Build the `/robots.txt` body. Extracted so both the normal crawl policy and
+/// the staging noindex policy are covered by a test without touching the
+/// process environment.
+fn robots_body(noindex: bool, base: &str) -> String {
+    if noindex {
+        "User-agent: *\nDisallow: /\n".to_string()
+    } else {
+        format!("User-agent: *\nAllow: /\nDisallow: /room/\n\nSitemap: {base}/sitemap.xml\n")
+    }
 }
 
 /// Pages worth indexing, with a relative priority. Live rooms are deliberately
@@ -2307,6 +2313,130 @@ mod tests {
             "Search Console verification tag missing from <head>"
         );
         let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn home_page_carries_canonical_social_and_structured_data() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let base = crate::seo::public_base_url();
+        let app = test_app("head");
+        let res = router(app.clone())
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = body_string(res).await;
+
+        assert!(
+            body.contains(&format!(r#"<link rel="canonical" href="{base}/">"#)),
+            "home needs an absolute canonical URL: {body}"
+        );
+        assert!(
+            body.contains(&format!(r#"<meta property="og:url" content="{base}/">"#)),
+            "home needs og:url matching canonical: {body}"
+        );
+        assert!(
+            body.contains(r#"<meta property="og:site_name" content="Hex Ports">"#),
+            "home needs og:site_name: {body}"
+        );
+        assert!(
+            body.contains(&format!(
+                r#"<meta property="og:image" content="{base}/static/branding/og.jpg">"#
+            )),
+            "og:image must be absolute: {body}"
+        );
+        assert!(
+            body.contains(r#"<meta property="og:image:width" content="1200">"#)
+                && body.contains(r#"<meta property="og:image:height" content="630">"#),
+            "og:image dimensions must be declared: {body}"
+        );
+        assert!(
+            body.contains(r#"<meta name="twitter:card" content="summary_large_image">"#),
+            "home needs a Twitter card: {body}"
+        );
+        assert!(
+            body.contains("application/ld+json"),
+            "home needs JSON-LD: {body}"
+        );
+        assert!(
+            body.contains(r#""@type":"SoftwareApplication""#),
+            "JSON-LD must describe the app: {body}"
+        );
+        assert!(
+            body.contains(crate::seo::PLAY_STORE_URL),
+            "JSON-LD must link the Play listing: {body}"
+        );
+
+        // The block must be valid JSON, not just contain the right substrings.
+        let start = body
+            .find(r#"<script type="application/ld+json">"#)
+            .expect("JSON-LD script tag");
+        let start = start + r#"<script type="application/ld+json">"#.len();
+        let end = body[start..].find("</script>").expect("closing script tag") + start;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body[start..end]).expect("JSON-LD must parse as JSON");
+        let graph = parsed["@graph"].as_array().expect("@graph array");
+        assert!(
+            graph
+                .iter()
+                .any(|node| node["@type"] == "SoftwareApplication"),
+            "structured data must include a SoftwareApplication"
+        );
+
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn public_pages_have_unique_descriptions_and_canonical_paths() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let base = crate::seo::public_base_url();
+        let app = test_app("pagemeta");
+        for (path, marker) in [
+            ("/", "free online multiplayer board game"),
+            ("/how-to-play", "Learn how to play Hex Ports"),
+            ("/create", "Start a new Hex Ports game"),
+            ("/join", "Join a Hex Ports game"),
+            ("/privacy", "no accounts, no ads, and no tracking"),
+        ] {
+            let res = router(app.clone())
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "GET {path}");
+            let body = body_string(res).await;
+            assert!(
+                body.contains(marker),
+                "{path} is missing its unique description copy: {body}"
+            );
+            assert!(
+                body.contains(&format!(r#"<link rel="canonical" href="{base}{path}">"#)),
+                "{path} is missing its canonical URL: {body}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[test]
+    fn noindex_flag_parsing_and_robots_body() {
+        assert!(crate::seo::noindex_from(Some("1")));
+        assert!(crate::seo::noindex_from(Some(" TRUE ")));
+        assert!(crate::seo::noindex_from(Some("yes")));
+        assert!(crate::seo::noindex_from(Some("on")));
+        assert!(!crate::seo::noindex_from(Some("0")));
+        assert!(!crate::seo::noindex_from(Some("")));
+        assert!(!crate::seo::noindex_from(None));
+
+        assert_eq!(
+            robots_body(true, "https://example.test"),
+            "User-agent: *\nDisallow: /\n"
+        );
+        let prod = robots_body(false, "https://example.test");
+        assert!(prod.contains("Disallow: /room/"));
+        assert!(prod.contains("Sitemap: https://example.test/sitemap.xml"));
     }
 
     #[tokio::test]

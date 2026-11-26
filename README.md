@@ -118,7 +118,12 @@ The prod compose sets `CATAN_PUBLIC_URL=https://hexports.duckdns.org`, so
 `/robots.txt` and `/sitemap.xml` advertise `hexports.duckdns.org` as the canonical
 origin. `playcatanou.duckdns.org` keeps serving the same app as an alias (the TWA
 still points at it). Leave `CATAN_PUBLIC_URL` unset to fall back to
-`playcatanou.duckdns.org`.
+`hexports.duckdns.org`.
+
+Set `CATAN_NOINDEX=1` on a staging/preview instance: it serves `X-Robots-Tag:
+noindex`, a `noindex` meta tag on every page, and a `Disallow: /` `robots.txt`,
+so the preview host cannot compete with production in search. Do not set it on
+production.
 
 ---
 
