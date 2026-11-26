@@ -282,6 +282,19 @@ fn shell(title: &str, body: Markup) -> Markup {
         html lang="en" {
             (head_common(title))
             body {
+                // One-time rename notice (OMK-642). Rendered hidden so players
+                // who already dismissed it never see a flash; `pwa.js` reveals
+                // it until the dismiss flag is set.
+                div #rename-notice.rename-notice role="status" hidden {
+                    div.notice-inner {
+                        p.notice-text {
+                            "We're now " strong { "Hex Ports" }
+                            " — same game, same rooms, no action needed."
+                        }
+                        button #rename-notice-dismiss.notice-close type="button"
+                            aria-label="Dismiss notice" { "✕" }
+                    }
+                }
                 header.site {
                     div.wrap {
                         a.brand href="/" {
@@ -3197,5 +3210,35 @@ mod tests {
             banner < wrap && wrap < board && board < controls && controls < trades,
             "controls must live inside .board-wrap after the board, not in a fixed overlay"
         );
+    }
+
+    /// The rename notice (OMK-642) must ship in the public-page shell so it
+    /// reaches returning players on the home and lobby screens, and its copy
+    /// must stay trademark-clean.
+    #[test]
+    fn public_pages_carry_a_trademark_clean_rename_notice() {
+        for (name, page) in [
+            ("home", home_page().into_string()),
+            ("lobby", lobby_page("ABCD", &two_player_room(), "t0").into_string()),
+        ] {
+            assert!(
+                page.contains("id=\"rename-notice\""),
+                "{name} page must render the rename notice"
+            );
+            assert!(
+                page.contains("We're now <strong>Hex Ports</strong>")
+                    && page.contains("same game, same rooms, no action needed"),
+                "{name} page must carry the rename copy: {page}"
+            );
+            assert!(
+                page.contains("id=\"rename-notice-dismiss\""),
+                "{name} page needs a dismiss control"
+            );
+            let lower = page.to_lowercase();
+            assert!(
+                !lower.contains("catan") && !lower.contains("settlers"),
+                "{name} page (including the notice) must stay trademark-clean"
+            );
+        }
     }
 }

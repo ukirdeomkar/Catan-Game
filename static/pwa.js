@@ -12,6 +12,29 @@
     });
   }
 
+  // One-time "we renamed" notice (OMK-642). The server renders it hidden so a
+  // player who already dismissed it never sees a flash; reveal it only until
+  // the persisted dismiss flag is set. CSP-safe: a listener, no inline handler.
+  (function () {
+    var key = "hexports_rename_notice_v1";
+    var notice = document.getElementById("rename-notice");
+    if (!notice) return;
+    var dismissed = false;
+    try {
+      dismissed = localStorage.getItem(key) === "1";
+    } catch (e) {}
+    notice.hidden = dismissed;
+    notice.addEventListener("click", function (e) {
+      var btn =
+        e.target && e.target.closest && e.target.closest("#rename-notice-dismiss");
+      if (!btn) return;
+      try {
+        localStorage.setItem(key, "1");
+      } catch (e) {}
+      notice.hidden = true;
+    });
+  })();
+
   var deferred = null;
   var bar = null;
 

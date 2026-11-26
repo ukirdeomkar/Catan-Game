@@ -518,3 +518,13 @@ body:not(.game) .check input{width:18px;height:18px;accent-color:#2e7dd1}
 .replay-item.on a{color:#ffeaa7;font-weight:900}
 .replay-num{color:#9fc0d8;font-weight:900;min-width:26px;text-align:right}
 .pill.win .replay-open,.pill.over .replay-open{margin-left:10px;padding:4px 10px;min-height:28px;font-size:12px}
+
+/* --- One-time rename notice (OMK-642) --- */
+.rename-notice{background:#8c1c13;color:#fff;border-bottom:1px solid #ffffff33;box-shadow:0 2px 10px #0004}
+.rename-notice[hidden]{display:none}
+.rename-notice .notice-inner{max-width:1180px;margin:0 auto;padding:10px 14px;display:flex;align-items:center;gap:10px}
+.rename-notice .notice-text{margin:0;flex:1 1 auto;font-size:14px;font-weight:700;line-height:1.35}
+.rename-notice .notice-text strong{color:#ffeaa7;font-weight:900}
+.rename-notice .notice-close{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:1px solid #ffffff59;background:#00000026;color:#fff;font-size:15px;font-weight:900;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.rename-notice .notice-close:hover,.rename-notice .notice-close:focus-visible{background:#ffffff26;border-color:#ffffffaa}
+@media(max-width:420px){.rename-notice .notice-inner{padding:10px 12px;gap:8px}.rename-notice .notice-text{font-size:13px}}
