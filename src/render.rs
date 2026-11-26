@@ -596,7 +596,7 @@ pub fn privacy_page() -> Markup {
                     "This policy describes how the "
                     b { "Hex Ports" }
                     " game handles information. It applies to the website at "
-                    a href="/" { "playcatanou.duckdns.org" }
+                    a href="/" { "hexports.duckdns.org" }
                     " and to the Android app "
                     b { "Hex Ports" }
                     " (package "

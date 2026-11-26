@@ -2310,6 +2310,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn privacy_page_names_the_canonical_host_and_keeps_required_copy() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("privacy");
+        let res = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/privacy")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = body_string(res).await;
+
+        assert!(
+            body.contains("hexports.duckdns.org"),
+            "the privacy page must name the canonical host: {body}"
+        );
+        assert!(
+            !body.contains("playcatanou.duckdns.org"),
+            "the privacy page must not name the retired host: {body}"
+        );
+        assert!(
+            body.contains("org.playcatanou.twa"),
+            "the Play package id is unchanged and must still be shown: {body}"
+        );
+        assert!(
+            body.contains("not affiliated with") && body.contains("CATAN GmbH"),
+            "the required CATAN non-affiliation disclaimer must stay: {body}"
+        );
+
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
     async fn guide_looks_a_live_room_up_case_insensitively() {
         let app = test_app("case");
         let (room, _token) = app.create_room("Al".into(), 0, false).unwrap();
