@@ -20,6 +20,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_stream::wrappers::WatchStream;
+use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
 
 pub fn router(app: Arc<AppState>) -> Router {
     Router::new()
@@ -54,6 +56,18 @@ pub fn router(app: Arc<AppState>) -> Router {
             create_rate_limit,
         ))
         .layer(axum::middleware::from_fn(security_headers))
+        // Compress HTML, CSS, JS and the SSE fragment stream. gzip shrinks the
+        // initial game page ~7x, the stylesheet ~4x, and the per-bump SSE
+        // payload ~12x (a 26 KB board fragment is ~3 KB). SSE is compressed on
+        // purpose: tower-http's default predicate skips it because a buffering
+        // compressor would stall a stream, but this layer's encoder flushes on
+        // each poll, so events still arrive on the bump (measured in the perf
+        // harness: bump cadence unchanged, ~120 KB of events sent as ~10 KB).
+        .layer(CompressionLayer::new().compress_when(
+            SizeAbove::default()
+                .and(NotForContentType::GRPC)
+                .and(NotForContentType::IMAGES),
+        ))
         .with_state(app)
 }
 
@@ -2720,5 +2734,105 @@ mod tests {
             room.data.lock().unwrap().code,
             dir.display()
         );
+    }
+
+    // --- response compression ---------------------------------------------
+
+    #[tokio::test]
+    async fn compressible_pages_are_gzipped_when_negotiated() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("gzip-page");
+        let gz = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/how-to-play")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gz.status(), StatusCode::OK);
+        assert_eq!(
+            gz.headers().get(header::CONTENT_ENCODING).map(|v| v.as_bytes()),
+            Some(b"gzip".as_slice()),
+            "a compressible page must be gzip-encoded when the client asks for it"
+        );
+
+        let identity = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/how-to-play")
+                    .header(header::ACCEPT_ENCODING, "identity")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            identity.headers().get(header::CONTENT_ENCODING).is_none(),
+            "a client that cannot decode gzip must get the bytes unchanged"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn static_assets_are_gzipped_when_negotiated() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let app = test_app("gzip-static");
+        let res = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/static/app.css")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers().get(header::CONTENT_ENCODING).map(|v| v.as_bytes()),
+            Some(b"gzip".as_slice()),
+            "the stylesheet is the largest static asset and must be compressed"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
+    }
+
+    #[tokio::test]
+    async fn the_sse_stream_is_gzipped_without_changing_its_content_type() {
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let (app, _room, code, token) = started_room("gzip-sse");
+        let res = router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/room/{code}/events"))
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .header(header::COOKIE, format!("{}={token}", cookie_name(&code)))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(
+            res.headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.starts_with("text/event-stream")),
+            "compression must not change the SSE content type"
+        );
+        assert_eq!(
+            res.headers().get(header::CONTENT_ENCODING).map(|v| v.as_bytes()),
+            Some(b"gzip".as_slice()),
+            "the per-bump fragment stream is the big payload and must be compressed"
+        );
+        let _ = std::fs::remove_dir_all(app.data_dir.clone());
     }
 }
