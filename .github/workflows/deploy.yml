@@ -120,6 +120,11 @@ jobs:
             output file (normally <dynamic-dir>/hexports.yml), reusing the service that
             backs the playcatanou.duckdns.org router. If that service cannot be resolved it
             exits non-zero instead of publishing a broken route.
+
+            The built-in fallback parser (used only when PyYAML is unavailable) reads
+            block-style YAML from the top level of the dynamic directory. Flow-style files
+            or per-app subdirectories are not parsed; the script then fails closed instead
+            of guessing.
             """
 
             import glob
@@ -135,6 +140,7 @@ jobs:
             CERT_RESOLVER = "duckdns"
             NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
             URL_RE = re.compile(r"^https?://[^\s\"']+$")
+            HOST_RULE_RE = re.compile(r"\bHost\s*\(([^)]*)\)")
 
             try:
                 import yaml  # type: ignore
@@ -152,6 +158,22 @@ jobs:
 
             def note(message):
                 print(message, file=sys.stderr)
+
+
+            def rule_matches_canonical(rule):
+                """True only when a Host(...) argument is exactly the canonical host.
+
+                A substring test would wrongly accept rules like
+                Host(`not-playcatanou.duckdns.org`) or wildcard rules.
+                """
+                if not isinstance(rule, str):
+                    return False
+                for match in HOST_RULE_RE.finditer(rule):
+                    for argument in match.group(1).split(","):
+                        value = argument.strip().strip('"').strip("`").strip("'")
+                        if value.lower() == CANONICAL_HOST.lower():
+                            return True
+                return False
 
 
             def dynamic_files(dynamic_dir, target_path):
@@ -199,7 +221,7 @@ jobs:
                     for router in routers.values():
                         if not isinstance(router, dict):
                             continue
-                        if CANONICAL_HOST not in str(router.get("rule") or ""):
+                        if not rule_matches_canonical(router.get("rule")):
                             continue
                         service = router.get("service")
                         if isinstance(service, str) and service.strip():
@@ -232,10 +254,8 @@ jobs:
                 return first_name, None
 
 
-            def yaml_collisions(docs, define_service):
-                sections = ["routers", "middlewares"]
-                if define_service:
-                    sections.append("services")
+            def yaml_collisions(docs):
+                sections = ["routers", "middlewares", "services"]
                 hits = []
                 for path, data in docs:
                     http = data.get("http")
@@ -302,7 +322,7 @@ jobs:
                         note("WARN: cannot read dynamic file %s: %s" % (path, exc))
                         continue
                     for position, entry in enumerate(entries):
-                        if entry["key"] != "rule" or CANONICAL_HOST not in entry["value"]:
+                        if entry["key"] != "rule" or not rule_matches_canonical(entry["value"]):
                             continue
                         router_position = None
                         for back in range(position - 1, -1, -1):
@@ -346,10 +366,8 @@ jobs:
                 return first_name, None
 
 
-            def simple_collisions(dynamic_dir, target_path, define_service):
-                parents = ("routers", "middlewares")
-                if define_service:
-                    parents = parents + ("services",)
+            def simple_collisions(dynamic_dir, target_path):
+                parents = ("routers", "middlewares", "services")
                 hits = []
                 for path in dynamic_files(dynamic_dir, target_path):
                     try:
@@ -438,11 +456,9 @@ jobs:
                     )
 
                 if HAVE_YAML:
-                    collisions = yaml_collisions(docs, define_service=(mode == "new"))
+                    collisions = yaml_collisions(docs)
                 else:
-                    collisions = simple_collisions(
-                        dynamic_dir, target_path, define_service=(mode == "new")
-                    )
+                    collisions = simple_collisions(dynamic_dir, target_path)
                 if collisions:
                     die("refusing to write, %s already defined elsewhere: %s" % (ROUTER_NAME, ", ".join(collisions)))
 
@@ -471,6 +487,7 @@ jobs:
                 try:
                     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                         handle.write(rendered)
+                    os.chmod(temp_path, 0o644)
                     os.replace(temp_path, target_path)
                 except Exception as exc:
                     try:
