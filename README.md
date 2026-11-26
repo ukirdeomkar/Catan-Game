@@ -98,6 +98,22 @@ git pull
 docker compose up -d --build
 ```
 
+### Production Traefik route (`hexports.duckdns.org`)
+
+The Hetzner VPS serves the app through an external Traefik instance that uses the
+**file provider** (`/dynamic`, mounted from the host). The deploy workflow adds
+`hexports.duckdns.org` by writing one **additive** file, `hexports.yml`, into that
+provider directory. It reuses the service behind the existing `playcatanou.duckdns.org`
+router (or copies that service's target URL into a dedicated `catan-hexports` service)
+and never edits the existing router config. Re-running the deploy rewrites the same
+file idempotently.
+
+- On the VPS the file is usually `/root/traefik/dynamic/hexports.yml`; the workflow
+  resolves the real path from the Traefik container's `/dynamic` mount.
+- To remove the alias, delete that one file (`rm /root/traefik/dynamic/hexports.yml`).
+  Traefik watches the directory and drops the router; `playcatanou` is unaffected.
+- Do not hand-edit it — the next deploy rewrites it.
+
 ---
 
 ## Deploy as a plain binary (systemd)
