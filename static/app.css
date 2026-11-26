@@ -394,23 +394,27 @@ code.roomcode{background:#00000010;color:#11527d;font-weight:900;letter-spacing:
    display:grid;
    /* Symmetric side columns keep the board centred in the viewport. */
    grid-template-columns:250px minmax(0,1fr) 250px;
-   grid-template-rows:auto auto minmax(0,1fr) auto auto;
+   /* titlebar / topbar / turn banner / board / dock / hand, in that order.
+      Every direct child is placed explicitly: an auto-placed #turnbanner used
+      to land in the empty 250px side track and stretch to full board height,
+      and .board-wrap (which now wraps #board) had no placement at all. */
+   grid-template-rows:auto auto auto minmax(0,1fr) auto auto;
  }
  .pwa-titlebar{grid-column:1 / -1;grid-row:1}
  #status{grid-column:1 / -1;grid-row:2}
- #board{grid-column:2;grid-row:3;min-height:0}
- #players{grid-column:3;grid-row:3;flex-direction:column;gap:6px;padding:0 2px 0 10px;overflow-y:auto;overflow-x:hidden;justify-content:flex-start}
+ #turnbanner{grid-column:1 / -1;grid-row:3}
+ .board-wrap{grid-column:2;grid-row:4;min-height:0}
+ #players{grid-column:3;grid-row:4;flex-direction:column;gap:6px;padding:0 2px 0 10px;overflow-y:auto;overflow-x:hidden;justify-content:flex-start}
  #players .pcard{flex:0 0 auto;width:100%;max-width:none;padding:6px 8px}
  #trades{display:contents}
- #turn{grid-column:1 / -1;grid-row:4}
- #hand{grid-column:1 / -1;grid-row:5}
+ #turn{grid-column:1 / -1;grid-row:5}
+ #hand{grid-column:1 / -1;grid-row:6}
  .bank{gap:6px}
  .reschip{font-size:14px;padding:4px 9px 4px 6px}
  .dock{padding:2px 18px 4px}
  .dockbtn{width:48px;height:48px;border-radius:14px}
  .handstrip{padding:4px 18px}
  .handstrip .rcard{width:50px;height:60px}
- .ctl{top:calc(132px + var(--titlebar-h,0px))}
  .trades .trade-card{bottom:172px}
  .modal-card{padding-bottom:4px}
  .topbar{padding:4px 8px 2px}

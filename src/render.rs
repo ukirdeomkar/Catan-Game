@@ -3212,6 +3212,27 @@ mod tests {
         );
     }
 
+    /// The desktop grid must place every direct child of `#app` explicitly.
+    /// The banner and the board wrapper were left to grid auto-placement, so
+    /// the banner landed in the empty 250px side track and stretched to full
+    /// board height while the topbar dropped to the bottom (OMK-651).
+    #[test]
+    fn desktop_grid_places_the_banner_and_board_wrapper_explicitly() {
+        let css = include_str!("../static/app.css");
+        assert!(
+            css.contains("#turnbanner{grid-column:1 / -1;grid-row:"),
+            "#turnbanner needs its own full-width desktop grid row"
+        );
+        assert!(
+            css.contains(".board-wrap{grid-column:2;grid-row:"),
+            ".board-wrap is the direct grid child (not #board); it needs placement"
+        );
+        assert!(
+            !css.contains("#board{grid-column:"),
+            "the stale #board grid-child rule no longer matches a direct child"
+        );
+    }
+
     /// The rename notice (OMK-642) must ship in the public-page shell so it
     /// reaches returning players on the home and lobby screens, and its copy
     /// must stay trademark-clean.
