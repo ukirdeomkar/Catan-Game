@@ -114,6 +114,12 @@ file idempotently.
   Traefik watches the directory and drops the router; `playcatanou` is unaffected.
 - Do not hand-edit it — the next deploy rewrites it.
 
+The prod compose sets `CATAN_PUBLIC_URL=https://hexports.duckdns.org`, so
+`/robots.txt` and `/sitemap.xml` advertise `hexports.duckdns.org` as the canonical
+origin. `playcatanou.duckdns.org` keeps serving the same app as an alias (the TWA
+still points at it). Leave `CATAN_PUBLIC_URL` unset to fall back to
+`playcatanou.duckdns.org`.
+
 ---
 
 ## Deploy as a plain binary (systemd)
