@@ -3,7 +3,7 @@
 A small, self-hosted multiplayer **hex-and-trade board game**. Rust backend, server-rendered
 HTML + SVG board, live updates over SSE. No JavaScript framework, no database, no bloat.
 
-**Play it now: <https://playcatanou.duckdns.org>** — or install the Android app from
+**Play it now: <https://hexharbor.duckdns.org>** — or install the Android app from
 **[Google Play](https://play.google.com/store/apps/details?id=org.hexharbor.twa)**.
 
 ---

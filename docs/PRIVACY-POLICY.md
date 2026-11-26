@@ -6,7 +6,7 @@ game.
 
 | Field | Value |
 |-------|-------|
-| Public URL | `https://playcatanou.duckdns.org/privacy` |
+| Public URL | `https://hexharbor.duckdns.org/privacy` |
 | Served from | `src/handlers.rs` → `render::privacy_page()` (`src/render.rs`) |
 | Reachable without login | yes (static server-rendered HTML) |
 | Applies to | website + Android app `org.hexharbor.twa` |
@@ -38,6 +38,6 @@ the app description:
 When the route ships, verify:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://playcatanou.duckdns.org/privacy
-curl -sS https://playcatanou.duckdns.org/privacy | grep -i 'Privacy Policy'
+curl -sS -o /dev/null -w '%{http_code}\n' https://hexharbor.duckdns.org/privacy
+curl -sS https://hexharbor.duckdns.org/privacy | grep -i 'Privacy Policy'
 ```

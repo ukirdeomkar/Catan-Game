@@ -2,14 +2,14 @@
 
 This is the Phase 0 Android shell for Hexharbor. It packages the existing PWA as a
 **Trusted Web Activity (TWA)** with [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap).
-The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org` in Chrome.
+The Rust backend is unchanged; the TWA renders `https://hexharbor.duckdns.org` in Chrome.
 
 ## Identity
 
 | Field | Value |
 |-------|-------|
 | Android package name | `org.hexharbor.twa` |
-| Host | `playcatanou.duckdns.org` |
+| Host | `hexharbor.duckdns.org` |
 | `versionCode` | `2` (launcher-icon fix, OMK-464; Play upload pending) |
 | `versionName` | `1.1.0` |
 | `minSdkVersion` | 24 |
@@ -49,7 +49,7 @@ dark wooden frame, never the logo.
 The generated Android project must opt into them. After `bubblewrap init`, edit
 `twa-manifest.json`:
 
-- `"maskableIconUrl": "https://playcatanou.duckdns.org/static/branding/icon-maskable-512.png"`
+- `"maskableIconUrl": "https://hexharbor.duckdns.org/static/branding/icon-maskable-512.png"`
 - `"backgroundColor": "#12181f"`
 
 If the generated project hardcodes a white `ic_launcher_background` (Bubblewrap versions
@@ -98,7 +98,7 @@ rotate a certificate.
 Verify with:
 
 ```bash
-curl -s https://playcatanou.duckdns.org/.well-known/assetlinks.json
+curl -s https://hexharbor.duckdns.org/.well-known/assetlinks.json
 ```
 
 ## Rebuilding the bundle
@@ -107,7 +107,7 @@ Bubblewrap generates the Android project from `twa-manifest.json`. To start a fr
 
 ```bash
 npx @bubblewrap/cli init \
-  --manifest https://playcatanou.duckdns.org/static/branding/site.webmanifest
+  --manifest https://hexharbor.duckdns.org/static/branding/site.webmanifest
 # edit twa-manifest.json: packageId org.hexharbor.twa, signingKey path/alias,
 # minSdkVersion 24 (Play requires >= 24), versions,
 # maskableIconUrl (icon-maskable-512.png) and backgroundColor #12181f

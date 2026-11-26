@@ -189,7 +189,7 @@ fn public_base_url() -> String {
         .ok()
         .map(|url| url.trim().trim_end_matches('/').to_string())
         .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
-        .unwrap_or_else(|| "https://playcatanou.duckdns.org".to_string())
+        .unwrap_or_else(|| "https://hexharbor.duckdns.org".to_string())
 }
 
 /// Crawler policy. Live rooms are private to the players who hold the code, so
