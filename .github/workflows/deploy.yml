@@ -75,6 +75,9 @@ jobs:
                 environment:
                   CATAN_ADDR: 0.0.0.0:8080
                   CATAN_DATA_DIR: /data
+                  # OMK-649: canonical public origin for robots.txt/sitemap.xml.
+                  # playcatanou.duckdns.org stays a working alias (same container).
+                  CATAN_PUBLIC_URL: "https://hexports.duckdns.org"
                 volumes:
                   - ./data:/data
                 healthcheck:
