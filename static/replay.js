@@ -9,8 +9,8 @@
 // history restore replaces a whole-body snapshot on Back/Forward, which
 // re-renders the page. Here Back/Forward re-fetch just the board frame too.
 (function () {
-  if (window.__catanReplayKeys) return;
-  window.__catanReplayKeys = true;
+  if (window.__hexportsReplayKeys) return;
+  window.__hexportsReplayKeys = true;
 
   var pendingUrl = null;
 

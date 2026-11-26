@@ -1,15 +1,15 @@
 # Privacy policy (Play Store listing)
 
-Hexharbor needs a public privacy-policy URL for its Google Play listing. The policy
+Hex Ports needs a public privacy-policy URL for its Google Play listing. The policy
 is served from the app itself, so it is one source of truth and stays online with the
 game.
 
 | Field | Value |
 |-------|-------|
-| Public URL | `https://playcatanou.duckdns.org/privacy` |
+| Public URL | `https://hexports.duckdns.org/privacy` |
 | Served from | `src/handlers.rs` → `render::privacy_page()` (`src/render.rs`) |
 | Reachable without login | yes (static server-rendered HTML) |
-| Applies to | website + Android app `org.hexharbor.twa` |
+| Applies to | website + Android app `org.hexports.twa` |
 | Content of record | the page itself — this doc only records the URL and the data-safety answers |
 
 ## Data-safety summary (matches the on-page policy)
@@ -27,17 +27,18 @@ For the Play Console *Data safety* form, answer: no data collected/shared for ad
 or analytics; the display name and in-game state are collected for app functionality and
 are deletable by leaving the room / automatic 24 h cleanup.
 
-## Non-affiliation (store listing)
+## Non-affiliation (in-app legal page only)
 
-The privacy page carries this disclaimer, and the Play Store listing should repeat it in
-the app description:
+The privacy page carries this disclaimer. It **must stay in the in-app privacy/legal page
+only** — do **not** copy it into the Play Store listing metadata, because it contains the
+CATAN trademark and the listing copy is mechanics-only:
 
-> Hexharbor is an independent game and is not affiliated with, endorsed by, or sponsored by
+> Hex Ports is an independent game and is not affiliated with, endorsed by, or sponsored by
 > CATAN GmbH, Catan Studio, or Asmodee. CATAN® is a registered trademark of CATAN GmbH.
 
 When the route ships, verify:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://playcatanou.duckdns.org/privacy
-curl -sS https://playcatanou.duckdns.org/privacy | grep -i 'Privacy Policy'
+curl -sS -o /dev/null -w '%{http_code}\n' https://hexports.duckdns.org/privacy
+curl -sS https://hexports.duckdns.org/privacy | grep -i 'Privacy Policy'
 ```

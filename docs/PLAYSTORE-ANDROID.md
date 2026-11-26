@@ -1,15 +1,54 @@
 # Android app (Play Store TWA)
 
-This is the Phase 0 Android shell for Hexharbor. It packages the existing PWA as a
+This is the Phase 0 Android shell for Hex Ports. It packages the existing PWA as a
 **Trusted Web Activity (TWA)** with [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap).
-The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org` in Chrome.
+The Rust backend is unchanged; the TWA renders `https://hexports.duckdns.org` in Chrome.
+
+## Play Store listing copy
+
+Final copy for the Play Console listing. It describes mechanics only: no third-party game
+name, brand, or "inspired by" phrasing appears anywhere in the metadata.
+
+**App name (title):** `Hex Ports`
+
+**Short description (57 / 80 chars):** `Build, trade, and settle a hex island with friends online.`
+
+**Full description:**
+
+```text
+Hex Ports is a fast, friendly board strategy game for 2-4 players. Claim a fresh hex
+island, gather wood, brick, wheat, ore, and sheep, then build roads, settlements, and
+cities to control the best ports and trade routes.
+
+Play with friends online in a private room: create a game, share the short room code,
+and start in seconds. Add computer opponents at Easy, Medium, or Hard to fill the table
+or practise on your own.
+
+Each turn you roll the dice for resources, then build, trade with other players or the
+bank, and buy development cards. Race to 10 victory points using settlements, cities,
+the Longest Road, and the Largest Army bonus.
+
+Features:
+- 2-4 players in private online rooms
+- A fresh randomized hex island every game
+- Player trades plus bank and port exchange rates
+- Development cards, the robber, and a 10-victory-point win
+- Easy, Medium, and Hard AI opponents
+- Auto-rolling dice, a live game log, and an end-of-game replay
+- Three turn-length options and an optional pause
+- Installs as an app on Android; the app shell works offline
+
+No accounts, no ads, no tracking. Pick a name and play.
+
+Build, trade, and settle your island - grab the best ports and win.
+```
 
 ## Identity
 
 | Field | Value |
 |-------|-------|
-| Android package name | `org.hexharbor.twa` |
-| Host | `playcatanou.duckdns.org` |
+| Android package name | `org.hexports.twa` |
+| Host | `hexports.duckdns.org` |
 | `versionCode` | `2` (launcher-icon fix, OMK-464; Play upload pending) |
 | `versionName` | `1.1.0` |
 | `minSdkVersion` | 24 |
@@ -22,10 +61,10 @@ protection rejects any bundle below API 24 ("Play automatic protection requires 
 SDK version of 24 or higher"). Older devices below API 24 are therefore out of scope for
 the Play Store listing.
 
-The package name is the CEO decision recorded for OMK-629 (the Hexharbor republish after the
-EU trademark takedown) and is used consistently in the Bubblewrap manifest, `assetlinks.json`,
-and this doc. It is a **new** package, so this is its first Play upload and the name must not
-change afterwards.
+The package name is the board decision recorded for OMK-636 (the Hex Ports rebrand that
+replaced the earlier provisional name) and is used consistently in the Bubblewrap manifest,
+`assetlinks.json`, and this doc. It is a **new** package, so this is its first Play upload and
+the name must not change afterwards.
 
 ## Launcher icon (maskable / adaptive)
 
@@ -49,7 +88,7 @@ dark wooden frame, never the logo.
 The generated Android project must opt into them. After `bubblewrap init`, edit
 `twa-manifest.json`:
 
-- `"maskableIconUrl": "https://playcatanou.duckdns.org/static/branding/icon-maskable-512.png"`
+- `"maskableIconUrl": "https://hexports.duckdns.org/static/branding/icon-maskable-512.png"`
 - `"backgroundColor": "#12181f"`
 
 If the generated project hardcodes a white `ic_launcher_background` (Bubblewrap versions
@@ -98,7 +137,7 @@ rotate a certificate.
 Verify with:
 
 ```bash
-curl -s https://playcatanou.duckdns.org/.well-known/assetlinks.json
+curl -s https://hexports.duckdns.org/.well-known/assetlinks.json
 ```
 
 ## Rebuilding the bundle
@@ -107,8 +146,8 @@ Bubblewrap generates the Android project from `twa-manifest.json`. To start a fr
 
 ```bash
 npx @bubblewrap/cli init \
-  --manifest https://playcatanou.duckdns.org/static/branding/site.webmanifest
-# edit twa-manifest.json: packageId org.hexharbor.twa, signingKey path/alias,
+  --manifest https://hexports.duckdns.org/static/branding/site.webmanifest
+# edit twa-manifest.json: packageId org.hexports.twa, signingKey path/alias,
 # minSdkVersion 24 (Play requires >= 24), versions,
 # maskableIconUrl (icon-maskable-512.png) and backgroundColor #12181f
 npx @bubblewrap/cli build

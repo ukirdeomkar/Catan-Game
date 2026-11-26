@@ -1,12 +1,12 @@
 # Art provenance
 
-All raster art in this repo is **original, AI-generated** (no official Catan scans/photos).
+All raster art in this repo is **original, AI-generated** (no third-party board-game scans or photos).
 
 - **Generator:** Canva `create-design` (agent connector), exported PNG via `export-design`.
 - **Date:** 2026-10-07
 - **Style block** (prepended to every subject below):
 
-  > Top-down painted illustration in classic Settlers-of-Catan board-game style — warm
+  > Top-down painted illustration in classic hex-island board-game style — warm
   > hand-painted oil texture, rich saturated colours, soft golden sunlight, soft shadows,
   > crisp focused detail, fills the frame edge to edge, no text, no labels, no border, no
   > frame, no watermark.
@@ -25,7 +25,7 @@ All raster art in this repo is **original, AI-generated** (no official Catan sca
 
 ## Resource + development cards — `static/cards/*.webp`
 
-Base: *a Catan resource card face, cream parchment border with a thin ornate gold rule, the
+Base: *a hex-island resource card face, cream parchment border with a thin ornate gold rule, the
 resource art centred, no text, no numbers.* Plus:
 
 | File | Art subject |
@@ -67,10 +67,10 @@ Hand-authored / code-drawn vector shapes (road, settlement, city, robber). Not A
 
 ## Brand and promo art — `static/branding/*`, `branding-src/*`
 
-The logo and promo scenes (`logo-*.webp`, `og.jpg`, `landscape.webp`, `potrait.webp`) use
-the same original AI-generated painted scenes as above. During the OMK-629 Hexharbor
-rebrand, the old wordmark baked into those files was covered and re-lettered offline with
-the `HEXHARBOR` wordmark and the tagline "Build, trade, and settle a hex island with
-friends." (deterministic SVG overlay via sharp; no image-generation model). The underlying
-illustration is unchanged and still contains no official CATAN trade dress. The manifest
-launcher icons are unchanged by that rebrand.
+The logo and promo scenes (`logo-128.webp`, `logo-512.webp`, `og.jpg`, and the
+launcher icons) derive from the board-supplied `branding-src/hexports-logo.png` emblem (1408x768
+PNG reading "HEX PORTS — BOARD STRATEGY GAME"). During the OMK-636 Hex Ports rebrand, the
+`branding-src/hexports-logo.png` art was cropped and composited onto a `#12181f` background to
+produce the header emblem, PWA launcher icons, maskable icons, favicons, Apple touch icon, and
+the 1200x630 Open Graph image (deterministic crop/mask/composite via sharp; no image-generation
+model). The underlying illustration is unchanged and contains no third-party trade dress.

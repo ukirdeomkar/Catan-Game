@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Hexharbor",
-  "short_name": "Hexharbor",
+  "name": "Hex Ports",
+  "short_name": "Hex Ports",
   "description": "Build, trade, and settle a hex island with friends.",
   "start_url": "/",
   "scope": "/",

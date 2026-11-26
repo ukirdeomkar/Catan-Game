@@ -1,11 +1,11 @@
-// Hexharbor service worker.
+// Hex Ports service worker.
 //
 // Its job is to make the app installable (Chrome fires `beforeinstallprompt`
 // only when a service worker with a real fetch handler controls the page) and
 // to give a small offline fallback. The game itself is live over SSE, so we
 // never cache game traffic — only the static app shell.
 
-const CACHE = "hexharbor-v13";
+const CACHE = "hexports-v13";
 
 // App-shell assets, pre-cached on install. Failures are ignored per-file so a
 // single missing asset can never wedge the worker install.
@@ -28,8 +28,6 @@ const SHELL = [
   "/static/pwa.js",
   "/static/replay.js",
   "/static/branding/logo-128.webp",
-  "/static/branding/landscape.webp",
-  "/static/branding/potrait.webp",
   "/static/branding/icon-192.png",
   "/static/branding/icon-512.png",
   "/static/board/ocean.webp",

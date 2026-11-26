@@ -1,7 +1,7 @@
 // Procedurally synthesized game audio (Web Audio API). Everything here is
 // generated at runtime, so there are no audio files and no licensing.
 (function () {
-  var STORAGE = "catan_audio_muted";
+  var STORAGE = "hexports_audio_muted";
   var muted = false;
   try { muted = localStorage.getItem(STORAGE) === "1"; } catch (e) {}
 

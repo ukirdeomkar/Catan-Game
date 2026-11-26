@@ -1,4 +1,4 @@
-//! Catan — a small self-hosted multiplayer board game server.
+//! Hex Ports — a small self-hosted multiplayer board game server.
 //!
 //! The rules engine in `game/` exposes a broad API (score helpers, legal-move
 //! enumeration, port lookups) that the server does not need *yet* but future

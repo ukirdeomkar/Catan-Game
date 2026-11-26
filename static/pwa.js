@@ -24,7 +24,7 @@
 
   function dismissed() {
     try {
-      return localStorage.getItem("catan_install_dismissed") === "1";
+      return localStorage.getItem("hexports_install_dismissed") === "1";
     } catch (e) {
       return false;
     }
@@ -53,7 +53,7 @@
     });
     bar.querySelector("#install-close").addEventListener("click", function () {
       try {
-        localStorage.setItem("catan_install_dismissed", "1");
+        localStorage.setItem("hexports_install_dismissed", "1");
       } catch (e) {}
       hide();
     });
@@ -75,7 +75,7 @@
   window.addEventListener("beforeinstallprompt", function (e) {
     e.preventDefault();
     deferred = e;
-    show("Install <b>Hexharbor</b> as an app", true);
+    show("Install <b>Hex Ports</b> as an app", true);
   });
 
   window.addEventListener("appinstalled", function () {
