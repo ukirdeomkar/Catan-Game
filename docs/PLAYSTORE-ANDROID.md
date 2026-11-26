@@ -1,14 +1,53 @@
 # Android app (Play Store TWA)
 
-This is the Phase 0 Android shell for Hexharbor. It packages the existing PWA as a
+This is the Phase 0 Android shell for Hex Ports. It packages the existing PWA as a
 **Trusted Web Activity (TWA)** with [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap).
 The Rust backend is unchanged; the TWA renders `https://playcatanou.duckdns.org` in Chrome.
+
+## Play Store listing copy
+
+Final copy for the Play Console listing. It describes mechanics only: no third-party game
+name, brand, or "inspired by" phrasing appears anywhere in the metadata.
+
+**App name (title):** `Hex Ports`
+
+**Short description (58 / 80 chars):** `Build, trade, and settle a hex island with friends online.`
+
+**Full description:**
+
+```text
+Hex Ports is a fast, friendly board strategy game for 2-4 players. Claim a fresh hex
+island, gather wood, brick, wheat, ore, and sheep, then build roads, settlements, and
+cities to control the best ports and trade routes.
+
+Play with friends online in a private room: create a game, share the short room code,
+and start in seconds. Add computer opponents at Easy, Medium, or Hard to fill the table
+or practise on your own.
+
+Each turn you roll the dice for resources, then build, trade with other players or the
+bank, and buy development cards. Race to 10 victory points using settlements, cities,
+the Longest Road, and the Largest Army bonus.
+
+Features:
+- 2-4 players in private online rooms
+- A fresh randomized hex island every game
+- Player trades plus bank and port exchange rates
+- Development cards, the robber, and a 10-victory-point win
+- Easy, Medium, and Hard AI opponents
+- Auto-rolling dice, a live game log, and an end-of-game replay
+- Three turn-length options and an optional pause
+- Installs as an app on Android; the app shell works offline
+
+No accounts, no ads, no tracking. Pick a name and play.
+
+Build, trade, and settle your island - grab the best ports and win.
+```
 
 ## Identity
 
 | Field | Value |
 |-------|-------|
-| Android package name | `org.hexharbor.twa` |
+| Android package name | `org.playcatanou.twa` |
 | Host | `playcatanou.duckdns.org` |
 | `versionCode` | `2` (launcher-icon fix, OMK-464; Play upload pending) |
 | `versionName` | `1.1.0` |
@@ -22,10 +61,11 @@ protection rejects any bundle below API 24 ("Play automatic protection requires 
 SDK version of 24 or higher"). Older devices below API 24 are therefore out of scope for
 the Play Store listing.
 
-The package name is the CEO decision recorded for OMK-629 (the Hexharbor republish after the
-EU trademark takedown) and is used consistently in the Bubblewrap manifest, `assetlinks.json`,
-and this doc. It is a **new** package, so this is its first Play upload and the name must not
-change afterwards.
+The package name is the **existing published app's** package, kept unchanged for OMK-636 so
+Google Play treats the Hex Ports rebrand as an **update to the same listing**, not a new app.
+It is used consistently in the Bubblewrap manifest, `assetlinks.json`, and this doc. The host
+also stays `playcatanou.duckdns.org` for the same reason: the TWA must keep serving the URL
+already verified for the installed app. Only the display name, artwork, and copy change.
 
 ## Launcher icon (maskable / adaptive)
 
@@ -38,13 +78,13 @@ The repo now ships maskable artwork alongside the existing `any` icons:
 
 | Asset | Contents |
 |-------|----------|
-| `static/branding/icon-maskable-192.png` | 192x192, full-bleed `#12181f`, logo at 66% |
-| `static/branding/icon-maskable-512.png` | 512x512, full-bleed `#12181f`, logo at 66% |
+| `static/branding/icon-maskable-192.png` | 192x192, full-bleed `#12181f`, logo at ~80% |
+| `static/branding/icon-maskable-512.png` | 512x512, full-bleed `#12181f`, logo at ~80% |
 
 Both are declared in `static/branding/site.webmanifest` with `"purpose": "maskable"`; the
-`any` and `apple-touch` icons are unchanged. The artwork is scaled to 66% so the plaque
-stays inside the adaptive-icon safe zone — a circular or squircle mask crops only the
-dark wooden frame, never the logo.
+`any` and `apple-touch` icons are unchanged. The artwork occupies ~80% of the canvas,
+sitting at the adaptive-icon 80% safe-zone boundary; it is centered on `#12181f` and not
+clipped — a circular or squircle mask crops only the dark wooden frame, never the logo.
 
 The generated Android project must opt into them. After `bubblewrap init`, edit
 `twa-manifest.json`:
@@ -108,7 +148,7 @@ Bubblewrap generates the Android project from `twa-manifest.json`. To start a fr
 ```bash
 npx @bubblewrap/cli init \
   --manifest https://playcatanou.duckdns.org/static/branding/site.webmanifest
-# edit twa-manifest.json: packageId org.hexharbor.twa, signingKey path/alias,
+# edit twa-manifest.json: packageId org.playcatanou.twa, signingKey path/alias,
 # minSdkVersion 24 (Play requires >= 24), versions,
 # maskableIconUrl (icon-maskable-512.png) and backgroundColor #12181f
 npx @bubblewrap/cli build

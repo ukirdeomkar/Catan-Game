@@ -244,10 +244,10 @@ fn head_common(title: &str) -> Markup {
             // hit-testing uses the full screen, so every tap lands slightly
             // down-right of the finger. In a browser tab the tag is a no-op.
             meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
-            meta name="theme-color" content="#1470a8";
+            meta name="theme-color" content="#8c1c13";
             meta name="google-site-verification" content=(GOOGLE_SITE_VERIFICATION);
             meta name="description" content="Build, trade, and settle a hex island with friends.";
-            meta property="og:title" content="Hexharbor";
+            meta property="og:title" content="Hex Ports";
             meta property="og:description" content="Create a room, share the code, and settle a hex island with friends.";
             meta property="og:image" content="/static/branding/og.jpg";
             meta property="og:type" content="website";
@@ -261,7 +261,7 @@ fn head_common(title: &str) -> Markup {
             link rel="stylesheet" href=(asset("/static/app.css"));
             meta name="apple-mobile-web-app-capable" content="yes";
             meta name="mobile-web-app-capable" content="yes";
-            meta name="apple-mobile-web-app-title" content="Hexharbor";
+            meta name="apple-mobile-web-app-title" content="Hex Ports";
             meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
             script src=(asset("/static/htmx.min.js")) defer {}
             script src=(asset("/static/sse.js")) defer {}
@@ -285,8 +285,8 @@ fn shell(title: &str, body: Markup) -> Markup {
                 header.site {
                     div.wrap {
                         a.brand href="/" {
-                            img src="/static/branding/logo-128.webp" alt="Hexharbor logo" width="42" height="42";
-                            span.bt { "Hexharbor" }
+                            img src="/static/branding/logo-128.webp" alt="Hex Ports logo" width="42" height="42";
+                            span.bt { "Hex Ports" }
                         }
                         button #audio-toggle type="button" title="Toggle sound" aria-label="Toggle sound" { "🔊" }
                     }
@@ -325,7 +325,7 @@ fn shell_game(title: &str, body: Markup) -> Markup {
 /// Landing menu: exactly three clear choices, so a new player can get started
 /// without scanning a page full of forms.
 pub fn home_page() -> Markup {
-    shell("Hexharbor", html! {
+    shell("Hex Ports", html! {
         div.wrap.page {
             div.hero {
                 p.muted { "Build, trade, and settle a hex island with friends." }
@@ -459,7 +459,7 @@ pub fn how_to_play_page(back: Option<&str>) -> Markup {
         div.wrap.page.howto {
             div.hero {
                 h1 { "How to play" }
-                p.muted { "A quick reference for Hexharbor — from the first roll to 10 victory points." }
+                p.muted { "A quick reference for Hex Ports — from the first roll to 10 victory points." }
             }
 
             @if let Some(code) = back {
@@ -563,7 +563,7 @@ pub fn how_to_play_page(back: Option<&str>) -> Markup {
     })
 }
 
-/// Public privacy policy for the **Hexharbor** app (`org.hexharbor.twa`)
+/// Public privacy policy for the **Hex Ports** app (`org.playcatanou.twa`)
 /// and the website it wraps. Required by the Google Play listing and must be
 /// reachable without an account or login. Plain server-rendered HTML — no
 /// JavaScript is needed to read it. See `docs/PRIVACY-POLICY.md` for the
@@ -573,7 +573,7 @@ pub fn privacy_page() -> Markup {
         div.wrap.page.policy {
             div.hero {
                 h1 { "Privacy Policy" }
-                p.muted { "Hexharbor" }
+                p.muted { "Hex Ports" }
                 p.policy-updated { "Last updated: 25 November 2026" }
             }
 
@@ -581,13 +581,13 @@ pub fn privacy_page() -> Markup {
                 h3 { "1. Who this covers" }
                 p {
                     "This policy describes how the "
-                    b { "Hexharbor" }
+                    b { "Hex Ports" }
                     " game handles information. It applies to the website at "
                     a href="/" { "playcatanou.duckdns.org" }
                     " and to the Android app "
-                    b { "Hexharbor" }
+                    b { "Hex Ports" }
                     " (package "
-                    code { "org.hexharbor.twa" }
+                    code { "org.playcatanou.twa" }
                     "), which is a Trusted Web Activity that displays that website."
                 }
             }
@@ -637,7 +637,7 @@ pub fn privacy_page() -> Markup {
             div.card {
                 h3 { "4. Data stored on your device" }
                 p {
-                    "Hexharbor is a Progressive Web App. Its service worker caches the app's own "
+                    "Hex Ports is a Progressive Web App. Its service worker caches the app's own "
                     "files (styles, images, and game code) in your browser cache so it loads quickly, "
                     "and remembers a small preference for whether you dismissed the \u{201c}install app\u{201d} "
                     "prompt. Clearing your browser's site data removes both at any time."
@@ -686,7 +686,7 @@ pub fn privacy_page() -> Markup {
             div.card {
                 h3 { "9. Trademarks and affiliation" }
                 p {
-                    "Hexharbor is an independent game and is not affiliated with, endorsed by, "
+                    "Hex Ports is an independent game and is not affiliated with, endorsed by, "
                     "or sponsored by CATAN GmbH, Catan Studio, or Asmodee. CATAN® is a "
                     "registered trademark of CATAN GmbH."
                 }
@@ -854,7 +854,7 @@ pub fn lobby_frag(code: &str, data: &RoomData, token: &str) -> Markup {
 }
 
 pub fn error_page(msg: &str) -> Markup {
-    shell("Hexharbor", html! {
+    shell("Hex Ports", html! {
         div.wrap.page {
             div.card {
                 h1 { "Oops" }
@@ -866,7 +866,7 @@ pub fn error_page(msg: &str) -> Markup {
 }
 
 pub fn join_page(code: &str) -> Markup {
-    shell("Join Hexharbor", html! {
+    shell("Join Hex Ports", html! {
         div.wrap.page {
             div.card {
                 h1 { "Join game " code { (code) } }
@@ -989,13 +989,13 @@ pub fn game_page(code: &str, data: &RoomData, viewer: Option<PlayerId>) -> Marku
     let game = data.game.as_ref().expect("started game");
     let blinded = viewer.is_some_and(|v| data.viewer_blinded(v));
     let f = fragments(game, data, viewer);
-    shell_game("Hexharbor game", html! {
+    shell_game("Hex Ports game", html! {
         div #app hx-ext="sse" sse-connect=(format!("/room/{code}/events")) {
             div #toasts.toasts {}
             div #notif.notif {}
             div.pwa-titlebar {
-                img src="/static/branding/logo-128.webp" alt="Hexharbor" width="20" height="20";
-                span { "Hexharbor" }
+                img src="/static/branding/logo-128.webp" alt="Hex Ports" width="20" height="20";
+                span { "Hex Ports" }
             }
             div #status.topbar sse-swap="status" { (f.status) }
             div #players.pstrip sse-swap="players" { (f.players) }

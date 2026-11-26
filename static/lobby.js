@@ -69,8 +69,8 @@
   function shareInvite() {
     if (!navigator.share) return;
     navigator.share({
-      title: "Join my Hexharbor room",
-      text: "Join my Hexharbor game",
+      title: "Join my Hex Ports room",
+      text: "Join my Hex Ports game",
       url: absoluteInvite(),
     }).catch(function () {
       // The player dismissed the native share sheet; nothing to report.

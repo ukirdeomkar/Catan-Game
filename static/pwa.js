@@ -75,7 +75,7 @@
   window.addEventListener("beforeinstallprompt", function (e) {
     e.preventDefault();
     deferred = e;
-    show("Install <b>Hexharbor</b> as an app", true);
+    show("Install <b>Hex Ports</b> as an app", true);
   });
 
   window.addEventListener("appinstalled", function () {
