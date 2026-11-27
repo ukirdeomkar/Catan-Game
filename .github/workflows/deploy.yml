@@ -101,6 +101,16 @@ jobs:
             docker compose pull catan
             docker compose up -d
 
+      # OMK-446: this is a separate SSH step so each `script:` scalar stays under
+      # GitHub Actions' 21,000-character expression limit. It only needs Docker,
+      # python3, iptables and curl on the host (no registry login).
+      - name: Configure Traefik routes and close public :8080 (OMK-446)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
             echo "=== OMK-646: add hexports.duckdns.org Traefik route (additive, idempotent) ==="
             TRAEFIK_DYNAMIC_DIR="$(docker inspect traefik --format '{{range .Mounts}}{{if eq .Destination "/dynamic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
             if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ]; then
@@ -571,7 +581,24 @@ jobs:
               exit 1
             fi
 
+      # OMK-446 rollback: runtime state is NOT removed by a revert + redeploy.
+      #   rm -f <traefik-dynamic-dir>/catan-redirect.yml
+      #   iptables -D DOCKER-USER -i <wan-if> -p tcp -m conntrack --ctorigdstport 8080 -j DROP
+      #   ip6tables -D DOCKER-USER -i <wan-if> -p tcp -m conntrack --ctorigdstport 8080 -j DROP
+      - name: Close public :8080 and redirect HTTP to HTTPS (OMK-446)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
             echo "=== OMK-446: close public :8080 and redirect HTTP to HTTPS ==="
+            # Separate SSH session: recompute the Traefik dynamic dir (same fallback
+            # as the hexports step) before verifying it below.
+            TRAEFIK_DYNAMIC_DIR="$(docker inspect traefik --format '{{range .Mounts}}{{if eq .Destination "/dynamic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+            if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ]; then
+              TRAEFIK_DYNAMIC_DIR=/root/traefik/dynamic
+            fi
             # Traefik reaches the app over the Docker bridge via the published host
             # port (the TRAEFIK PROBE shows Traefik bridge-networked, not host-network),
             # so binding the publish to loopback would break BOTH hostnames. Instead we
