@@ -49,6 +49,63 @@ def extract_scripts(path):
     return scripts
 
 
+def check_race_hardening(scripts):
+    """Guard the OMK-702 container-recreation race hardening.
+
+    The SSH deploy step must not run a bare `docker compose up -d`: when compose
+    recreates the fixed-name `catan` container it can lose a transient
+    `<id>_catan` container and exit 1, marking the deploy red and skipping the
+    post-deploy hardening steps. The step must remove the stale container first,
+    run `up` with `--remove-orphans`, bound the retries, and verify the container
+    actually came up.
+    """
+    deploy_script = None
+    for script in scripts:
+        if "docker compose pull catan" in script:
+            deploy_script = script
+            break
+    if deploy_script is None:
+        raise SystemExit("FAIL: could not find the deploy script containing `docker compose pull catan`")
+
+    problems = []
+    code = "\n".join(
+        line
+        for line in deploy_script.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    ups = [
+        match.start()
+        for match in re.finditer(r"docker compose up -d(?! --remove-orphans)", code)
+    ]
+    if ups:
+        problems.append(
+            "found %d unguarded `docker compose up -d` call(s) without --remove-orphans" % len(ups)
+        )
+    if "docker compose up -d --remove-orphans" not in code:
+        problems.append("missing `docker compose up -d --remove-orphans`")
+
+    rm_index = code.find("docker rm -f catan")
+    if rm_index == -1:
+        problems.append("missing `docker rm -f catan` to clear the stale container")
+    up_index = code.find("docker compose up -d --remove-orphans")
+    if rm_index != -1 and up_index != -1 and rm_index > up_index:
+        problems.append("`docker rm -f catan` must run before the first `docker compose up`")
+
+    for marker, description in (
+        ("up_attempt", "bounded retry counter"),
+        ("up_ok", "retry success flag"),
+    ):
+        if marker not in code:
+            problems.append("missing %s (`%s`)" % (description, marker))
+
+    if "docker inspect catan" not in code:
+        problems.append("missing post-up `docker inspect catan` status check")
+
+    if problems:
+        raise SystemExit("FAIL: deploy race hardening incomplete:\n  - " + "\n  - ".join(problems))
+    print("PASS: deploy step guards the container-recreation race (remove + bounded retry + status check)")
+
+
 def main():
     if not os.path.isfile(DEPLOY):
         raise SystemExit("deploy workflow not found: %s" % DEPLOY)
@@ -69,6 +126,7 @@ def main():
             "inline code into a checked-in file." % (LIMIT, LIMIT)
         )
     print("PASS: all %d deploy script scalars are under %d chars" % (len(scripts), LIMIT))
+    check_race_hardening(scripts)
 
 
 if __name__ == "__main__":

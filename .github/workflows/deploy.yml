@@ -99,7 +99,44 @@ jobs:
             mkdir -p data
             chown 10001:10001 data
             docker compose pull catan
-            docker compose up -d
+
+            # OMK-702: `docker compose up -d` can race while recreating the fixed-name
+            # `catan` container. Compose renames the old container to a transient
+            # `<id>_catan`, then another part of the same run removes it before compose
+            # tries to start it, so `up` exits 1 ("No such container: <id>_catan") even
+            # though the replacement container is healthy. That turned an otherwise-good
+            # deploy red and skipped the OMK-446/OMK-481 hardening steps below.
+            # Remove the stale container explicitly, retry `up` a bounded number of
+            # times, then confirm the container is actually running before continuing.
+            docker rm -f catan >/dev/null 2>&1 || true
+
+            up_attempt=1
+            up_ok=0
+            while [ "$up_attempt" -le 3 ]; do
+              if docker compose up -d --remove-orphans; then
+                up_ok=1
+                break
+              fi
+              echo "WARN: docker compose up attempt ${up_attempt}/3 failed; retrying in 5s" >&2
+              sleep 5
+              docker rm -f catan >/dev/null 2>&1 || true
+              up_attempt=$((up_attempt + 1))
+            done
+            if [ "$up_ok" -ne 1 ]; then
+              echo "ERROR: docker compose up failed after 3 attempts" >&2
+              exit 1
+            fi
+
+            catan_status="$(docker inspect catan --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
+            case "${catan_status:-missing}" in
+              running|starting|healthy)
+                echo "catan container status: ${catan_status}"
+                ;;
+              *)
+                echo "ERROR: catan container is not running after compose up (status: ${catan_status:-missing})" >&2
+                exit 1
+                ;;
+            esac
 
       # OMK-446: this is a separate SSH step so each `script:` scalar stays under
       # GitHub Actions' 21,000-character expression limit. It only needs Docker,
