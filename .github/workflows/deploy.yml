@@ -707,3 +707,97 @@ jobs:
             echo "=== TRAEFIK PROBE END ==="
 
             docker image prune -f
+
+      # OMK-481 rollback: runtime state is NOT removed by a revert + redeploy.
+      #   rm -f <traefik-dynamic-dir>/catan-tls.yml
+      # Traefik re-reads the file provider and the CBC suites are accepted again.
+      - name: Restrict Catan edge TLS 1.2 to AEAD suites (OMK-481)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "=== OMK-481: restrict TLS 1.2 at the Traefik edge to AEAD suites ==="
+            # TLS 1.3 is deliberately NOT restricted: no maxVersion is set and Go
+            # hardcodes AEAD-only TLS 1.3 suites. Only the TLS 1.2 cipher list is
+            # narrowed to the three RSA AEAD suites the edge already negotiates.
+            # A named option (catan-aead) and the provider-wide `default` carry the
+            # same list: `default` is what makes the restriction take effect for the
+            # pre-existing playcatanou router without editing its file, and the named
+            # option lets a future per-router change point at the same list.
+            TRAEFIK_DYNAMIC_DIR="$(docker inspect traefik --format '{{range .Mounts}}{{if eq .Destination "/dynamic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+            if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ]; then
+              TRAEFIK_DYNAMIC_DIR=/root/traefik/dynamic
+            fi
+            if [ ! -d "${TRAEFIK_DYNAMIC_DIR}" ]; then
+              echo "ERROR: OMK-481 Traefik dynamic dir '${TRAEFIK_DYNAMIC_DIR}' does not exist; refusing to leave CBC suites enabled" >&2
+              exit 1
+            fi
+            CATAN_TLS_FILE="${TRAEFIK_DYNAMIC_DIR}/catan-tls.yml"
+            cat > "${CATAN_TLS_FILE}" <<'CATAN_TLS_YML'
+            tls:
+              options:
+                catan-aead:
+                  minVersion: VersionTLS12
+                  cipherSuites:
+                    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+                    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+                    - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+                    - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+                    - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+                    - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+                default:
+                  minVersion: VersionTLS12
+                  cipherSuites:
+                    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+                    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+                    - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+                    - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+                    - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+                    - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+            CATAN_TLS_YML
+            if [ ! -s "${CATAN_TLS_FILE}" ]; then
+              echo "ERROR: OMK-481 could not write ${CATAN_TLS_FILE}" >&2
+              exit 1
+            fi
+            echo "OMK-481: wrote ${CATAN_TLS_FILE}"
+
+            # Verify from the host with SNI. openssl may be absent on a minimal
+            # image; skip the probe only then (the change is still applied and is
+            # re-probed externally after the deploy). A present openssl that still
+            # negotiates the CBC suite after the reload means the restriction did
+            # not take effect (e.g. the Catan router pins its own tls.options), so
+            # fail closed instead of reporting a false success.
+            if ! command -v openssl >/dev/null 2>&1; then
+              echo "WARN: OMK-481 openssl not available on the host; skipping the in-deploy cipher probe"
+            else
+              CBC_OK=""
+              for attempt in 1 2 3 4 5; do
+                sleep 4
+                if echo | openssl s_client -connect 127.0.0.1:443 \
+                    -servername playcatanou.duckdns.org -tls1_2 \
+                    -cipher ECDHE-RSA-AES128-SHA 2>/dev/null | grep -q 'Cipher is ECDHE-RSA-AES128-SHA'; then
+                  CBC_OK="yes"
+                else
+                  CBC_OK=""
+                  break
+                fi
+              done
+              if [ -n "${CBC_OK:-}" ]; then
+                echo "ERROR: OMK-481 ECDHE-RSA-AES128-SHA is still accepted after the reload; the Catan router may set its own tls.options" >&2
+                exit 1
+              fi
+              echo "OMK-481: ECDHE-RSA-AES128-SHA now fails the TLS 1.2 handshake"
+              if ! echo | openssl s_client -connect 127.0.0.1:443 \
+                  -servername playcatanou.duckdns.org -tls1_2 \
+                  -cipher ECDHE-RSA-AES128-GCM-SHA256 2>/dev/null | grep -q 'Cipher is ECDHE-RSA-AES128-GCM-SHA256'; then
+                echo "ERROR: OMK-481 the AEAD suite ECDHE-RSA-AES128-GCM-SHA256 no longer negotiates; refusing to leave TLS broken" >&2
+                exit 1
+              fi
+              echo "OMK-481: AEAD suite ECDHE-RSA-AES128-GCM-SHA256 still negotiates"
+            fi
+
+            echo "--- OMK-481 healthz smoke check (non-fatal; Traefik watch may lag) ---"
+            curl -fsS --max-time 20 https://playcatanou.duckdns.org/healthz || true
+            echo
