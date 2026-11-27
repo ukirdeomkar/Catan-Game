@@ -5,6 +5,7 @@ use crate::game::resources::{
     ResourceHand,
 };
 use crate::game::state::{BotLevel, Color, GameState, Move, Phase, PlayerId, TradeResponse};
+use crate::seo::{PLAY_STORE_URL, REPO_URL, SITE_NAME, noindex_enabled, public_base_url};
 use crate::state::{Layout, RoomData, ViewMode, now_ms};
 use maud::{DOCTYPE, Markup, html};
 
@@ -234,7 +235,101 @@ fn asset(path: &str) -> String {
 /// periodically.
 const GOOGLE_SITE_VERIFICATION: &str = "9Hzo3OHl6PuuMYEbue8WOB8p4zMWHD1SA5QrVix9t2o";
 
-fn head_common(title: &str) -> Markup {
+/// Description used by pages that are not themselves search results.
+const DEFAULT_DESCRIPTION: &str = "Build, trade, and settle a hex island with friends.";
+
+/// Search and social metadata for one page.
+///
+/// `path` is the canonical path for an indexable public page. `None` marks an
+/// internal page (lobby, live room, error, replay) that must never be indexed,
+/// so it gets a `noindex` directive and no canonical URL.
+struct PageMeta<'a> {
+    title: &'a str,
+    description: &'a str,
+    path: Option<&'a str>,
+    og_type: &'a str,
+}
+
+const HOME_META: PageMeta<'static> = PageMeta {
+    title: "Hex Ports — free multiplayer hex-island board game online",
+    description: "Hex Ports is a free online multiplayer board game. Create a room, share the code, and settle a hex island with friends — no account and no download.",
+    path: Some("/"),
+    og_type: "website",
+};
+
+const HOW_TO_PLAY_META: PageMeta<'static> = PageMeta {
+    title: "How to play · Hex Ports",
+    description: "Learn how to play Hex Ports in two minutes: roll the dice, collect resources, build roads, settlements and cities, trade, and reach 10 victory points.",
+    path: Some("/how-to-play"),
+    og_type: "article",
+};
+
+const CREATE_META: PageMeta<'static> = PageMeta {
+    title: "Create a room · Hex Ports",
+    description: "Start a new Hex Ports game: name your room, choose a turn length, and share the code with friends.",
+    path: Some("/create"),
+    og_type: "website",
+};
+
+const JOIN_META: PageMeta<'static> = PageMeta {
+    title: "Join a room · Hex Ports",
+    description: "Join a Hex Ports game with the room code a friend shared with you.",
+    path: Some("/join"),
+    og_type: "website",
+};
+
+const PRIVACY_META: PageMeta<'static> = PageMeta {
+    title: "Privacy Policy · Hex Ports",
+    description: "Hex Ports privacy policy: no accounts, no ads, and no tracking. What the game stores, and why.",
+    path: Some("/privacy"),
+    og_type: "website",
+};
+
+/// JSON-LD graph tying the web app to its Play listing and source repository.
+///
+/// Emitted as `<script type="application/ld+json">`, a non-executable data
+/// block. The CSP `script-src 'self'` governs script execution only, so a data
+/// block is not blocked and needs no hash; a hash would be required only for an
+/// executable inline script.
+fn structured_data(base: &str) -> Markup {
+    let home = format!("{base}/");
+    let home_url = home.as_str();
+    let doc = serde_json::json!({
+        "@context": "https://schema.org",
+        "@graph": [
+            {
+                "@type": "WebSite",
+                "name": SITE_NAME,
+                "url": home_url,
+                "description": HOME_META.description,
+            },
+            {
+                "@type": "Organization",
+                "name": SITE_NAME,
+                "url": home_url,
+                "sameAs": [REPO_URL],
+            },
+            {
+                "@type": "SoftwareApplication",
+                "name": SITE_NAME,
+                "applicationCategory": "GameApplication",
+                "operatingSystem": "Android",
+                "url": home_url,
+                "installUrl": PLAY_STORE_URL,
+                "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            },
+        ],
+    });
+    html! {
+        script type="application/ld+json" { (maud::PreEscaped(doc.to_string())) }
+    }
+}
+
+fn head_common(meta: &PageMeta<'_>) -> Markup {
+    let base = public_base_url();
+    let canonical = meta.path.map(|path| format!("{base}{path}"));
+    let og_image = format!("{base}/static/branding/og.jpg");
+    let indexable = meta.path.is_some() && !noindex_enabled();
     html! {
         head {
             meta charset="utf-8";
@@ -246,12 +341,29 @@ fn head_common(title: &str) -> Markup {
             meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
             meta name="theme-color" content="#8c1c13";
             meta name="google-site-verification" content=(GOOGLE_SITE_VERIFICATION);
-            meta name="description" content="Build, trade, and settle a hex island with friends.";
-            meta property="og:title" content="Hex Ports";
-            meta property="og:description" content="Create a room, share the code, and settle a hex island with friends.";
-            meta property="og:image" content="/static/branding/og.jpg";
-            meta property="og:type" content="website";
-            title { (title) }
+            meta name="description" content=(meta.description);
+            @if let Some(url) = &canonical {
+                link rel="canonical" href=(url);
+            }
+            meta property="og:title" content=(meta.title);
+            meta property="og:description" content=(meta.description);
+            meta property="og:type" content=(meta.og_type);
+            meta property="og:site_name" content=(SITE_NAME);
+            @if let Some(url) = &canonical {
+                meta property="og:url" content=(url);
+            }
+            meta property="og:image" content=(og_image);
+            meta property="og:image:width" content="1200";
+            meta property="og:image:height" content="630";
+            meta property="og:image:alt" content="Hex Ports — a hex-island board game";
+            meta name="twitter:card" content="summary_large_image";
+            meta name="twitter:title" content=(meta.title);
+            meta name="twitter:description" content=(meta.description);
+            meta name="twitter:image" content=(og_image);
+            @if !indexable {
+                meta name="robots" content="noindex, nofollow";
+            }
+            title { (meta.title) }
             link rel="icon" href="/static/branding/favicon.ico" sizes="any";
             link rel="icon" type="image/png" sizes="32x32" href="/static/branding/favicon-32.png";
             link rel="icon" type="image/png" sizes="16x16" href="/static/branding/favicon-16.png";
@@ -263,6 +375,10 @@ fn head_common(title: &str) -> Markup {
             meta name="mobile-web-app-capable" content="yes";
             meta name="apple-mobile-web-app-title" content="Hex Ports";
             meta name="apple-mobile-web-app-status-bar-style" content="black-translucent";
+            // Structured data belongs to the landing page only.
+            @if meta.path == Some("/") {
+                (structured_data(&base))
+            }
             script src=(asset("/static/htmx.min.js")) defer {}
             script src=(asset("/static/sse.js")) defer {}
             script src=(asset("/static/session.js")) defer {}
@@ -276,11 +392,11 @@ fn head_common(title: &str) -> Markup {
     }
 }
 
-fn shell(title: &str, body: Markup) -> Markup {
+fn shell_meta(meta: PageMeta<'_>, body: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
-            (head_common(title))
+            (head_common(&meta))
             body {
                 // One-time rename notice (OMK-642). Rendered hidden so players
                 // who already dismissed it never see a flash; `pwa.js` reveals
@@ -320,12 +436,30 @@ fn shell(title: &str, body: Markup) -> Markup {
     }
 }
 
+fn shell(title: &str, body: Markup) -> Markup {
+    shell_meta(
+        PageMeta {
+            title,
+            description: DEFAULT_DESCRIPTION,
+            path: None,
+            og_type: "website",
+        },
+        body,
+    )
+}
+
 /// Full-viewport shell for the in-game screen: no header/footer, no scroll.
 fn shell_game(title: &str, body: Markup) -> Markup {
+    let meta = PageMeta {
+        title,
+        description: DEFAULT_DESCRIPTION,
+        path: None,
+        og_type: "website",
+    };
     html! {
         (DOCTYPE)
         html lang="en" {
-            (head_common(title))
+            (head_common(&meta))
             body.game { (body) }
         }
     }
@@ -336,9 +470,11 @@ fn shell_game(title: &str, body: Markup) -> Markup {
 // ---------------------------------------------------------------------------
 
 /// Landing menu: exactly three clear choices, so a new player can get started
-/// without scanning a page full of forms.
+/// without scanning a page full of forms. The short "What is" block and FAQ
+/// below the menu are the indexable copy for "play <game> online" style
+/// queries; the Play link ties the site to its Android listing.
 pub fn home_page() -> Markup {
-    shell("Hex Ports", html! {
+    shell_meta(HOME_META, html! {
         div.wrap.page {
             div.hero {
                 p.muted { "Build, trade, and settle a hex island with friends." }
@@ -366,6 +502,41 @@ pub fn home_page() -> Markup {
                     }
                 }
             }
+            p.home-play {
+                a href=(PLAY_STORE_URL) target="_blank" rel="noopener" {
+                    "Get it on Google Play"
+                }
+            }
+            section.card.seo-about aria-labelledby="about-heading" {
+                h2 #about-heading { "What is Hex Ports?" }
+                p {
+                    "Hex Ports is a free online board game for 2–4 players. Create a room, "
+                    "share the six-character code, and play a full game in the browser — no "
+                    "account, no download, and no install required. Trade resources, build "
+                    "roads, settlements, and cities, and be the first to reach 10 victory points."
+                }
+                p {
+                    "Play with friends on their phones or computers, add computer-controlled "
+                    "players to fill a table, or practise against bots. The same game is also "
+                    "available as an Android app on Google Play, and the site installs as a "
+                    "Progressive Web App in any modern browser."
+                }
+            }
+            section.card.faq aria-labelledby="faq-heading" {
+                h2 #faq-heading { "Frequently asked questions" }
+                dl {
+                    dt { "Is Hex Ports free?" }
+                    dd { "Yes. Creating a room and playing a full game costs nothing, and there are no ads or in-app purchases." }
+                    dt { "Do I need an account?" }
+                    dd { "No. Choose a short display name when you create or join a room; there is no sign-up or login." }
+                    dt { "How do I play with friends?" }
+                    dd { "Create a room and share the room code or invite link. Friends open the link, enter their name, and join the same island." }
+                    dt { "Can I play against bots?" }
+                    dd { "Yes. The room host can add computer-controlled players to fill empty seats and start the game." }
+                    dt { "Does it work on Android?" }
+                    dd { "Yes. Hex Ports is available as an Android app on Google Play, and the website works in any modern mobile or desktop browser." }
+                }
+            }
         }
     })
 }
@@ -373,7 +544,7 @@ pub fn home_page() -> Markup {
 /// Create-room screen: one short form, so the only thing to decide is a name
 /// (turn length keeps a single sensible default).
 pub fn create_page(error: Option<&str>) -> Markup {
-    shell("Create room", html! {
+    shell_meta(CREATE_META, html! {
         div.wrap.page {
             @if let Some(e) = error { div.card #toasts { (e) } }
             div.hero {
@@ -412,7 +583,7 @@ pub fn create_page(error: Option<&str>) -> Markup {
 /// join attempt, so an invited friend only has to type their name.
 pub fn join_room_page(error: Option<&str>, code: Option<&str>) -> Markup {
     let code_value = code.unwrap_or("");
-    shell("Join room", html! {
+    shell_meta(JOIN_META, html! {
         div.wrap.page {
             @if let Some(e) = error { div.card #toasts { (e) } }
             div.hero {
@@ -468,7 +639,7 @@ fn howto_back_links(back: Option<&str>) -> Markup {
 /// the game is never abandoned, and repeats it under the last card. Without it
 /// (opened from Home) the page keeps its single Home path.
 pub fn how_to_play_page(back: Option<&str>) -> Markup {
-    shell("How to play", html! {
+    shell_meta(HOW_TO_PLAY_META, html! {
         div.wrap.page.howto {
             div.hero {
                 h1 { "How to play" }
@@ -582,7 +753,7 @@ pub fn how_to_play_page(back: Option<&str>) -> Markup {
 /// JavaScript is needed to read it. See `docs/PRIVACY-POLICY.md` for the
 /// statement of record.
 pub fn privacy_page() -> Markup {
-    shell("Privacy Policy", html! {
+    shell_meta(PRIVACY_META, html! {
         div.wrap.page.policy {
             div.hero {
                 h1 { "Privacy Policy" }
@@ -3256,8 +3427,17 @@ mod tests {
                 "{name} page needs a dismiss control"
             );
             let lower = page.to_lowercase();
+            // Technical identifiers carry the retired name and cannot be
+            // renamed: the Play URL embeds the Android package id
+            // `org.playcatanou.twa`, and the source repository is `Catan-Game`.
+            // Neither is marketing copy, and the SEO work (#61) requires both
+            // links, so strip those two URLs before the trademark scan; any
+            // other occurrence of the name still fails.
+            let scrubbed = lower
+                .replace(&crate::seo::PLAY_STORE_URL.to_lowercase(), "")
+                .replace(&crate::seo::REPO_URL.to_lowercase(), "");
             assert!(
-                !lower.contains("catan") && !lower.contains("settlers"),
+                !scrubbed.contains("catan") && !scrubbed.contains("settlers"),
                 "{name} page (including the notice) must stay trademark-clean"
             );
         }

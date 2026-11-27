@@ -10,6 +10,7 @@ mod game;
 mod handlers;
 mod ratelimit;
 mod render;
+mod seo;
 mod state;
 
 use std::net::SocketAddr;
