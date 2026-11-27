@@ -2,8 +2,24 @@
 
 Tracking issue: <https://github.com/ukirdeomkar/Catan-Game/issues/14>
 
-> **Status: analysis + plan only.** No behaviour, layout, or backend code is changed in this
-> PR. Implementation lands on this branch (`docs/playstore-offline`) in follow-up commits.
+> **Status: partially shipped (updated 2026-11-27).** The Play Store launch described here
+> has shipped: the TWA shell, `/.well-known/assetlinks.json`, the Play listing, and the
+> installable PWA are live — see [PLAYSTORE-ANDROID.md](PLAYSTORE-ANDROID.md) for the
+> as-built details. The **offline solo-play work in §3 is not implemented**; the service
+> worker only caches the app shell and games still require the server. This document is kept
+> as the design record for that remaining work.
+
+## 0. What shipped vs. what remains
+
+Landed on `main` (not on this docs branch, which only adds this plan):
+
+| Item | State |
+|------|-------|
+| Play Store listing (TWA, package `org.playcatanou.twa`) | ✅ shipped and linked from the site |
+| `/.well-known/assetlinks.json` (upload + Play App Signing fingerprints) | ✅ served by `src/handlers.rs` |
+| Bubblewrap Android shell, adaptive/maskable icons, AAB build | ✅ in `docs/PLAYSTORE-ANDROID.md` |
+| Installable PWA (manifest + service worker fetch handler) | ✅ |
+| Offline/solo play against bots (WASM engine + client render/tick, §3) | ❌ **not started** |
 
 ## 1. What is being asked
 
@@ -31,7 +47,7 @@ The project already meets every TWA prerequisite:
 | HTTPS with a valid cert | ✅ `playcatanou.duckdns.org` |
 | Web app manifest (`start_url`, `display: standalone`, 192/512 icons) | ✅ `static/branding/site.webmanifest` |
 | Service worker with a fetch handler | ✅ `static/sw.js` |
-| Domain-verified via Digital Asset Links | ❌ **missing — only new server piece** |
+| Domain-verified via Digital Asset Links | ✅ served by `src/handlers.rs` (see §0) |
 
 **Why not a raw WebView wrapper:** Google's *minimum functionality / spam* policy routinely
 rejects apps that are "just a website in a WebView". A TWA is manifest-driven and domain-verified,
@@ -103,10 +119,9 @@ serving the game exactly as it does now.
 
 ## 5. Phased plan (checklist)
 
-- [ ] **Phase 0 — TWA shell (online-only to start).** Generate the signed `.aab` (Bubblewrap or
-      PWABuilder), add the `/.well-known/assetlinks.json` route + fingerprint, install-test on a
-      real device, and get the listing into closed testing. Ships to Play *without* waiting on
-      offline work.
+- [x] **Phase 0 — TWA shell (online-only to start).** Shipped: signed `.aab`, the
+      `/.well-known/assetlinks.json` route + fingerprints, and the Play listing. See §0 and
+      [PLAYSTORE-ANDROID.md](PLAYSTORE-ANDROID.md) for the as-built details.
 - [ ] **Phase 1 — WASM build of the engine.** Add the `wasm` target and `wasm-bindgen`
       bindings for `game/` + `bot.rs`; prove a full bot game can be played headlessly in Node/a
       test page. No UI yet.
@@ -121,8 +136,8 @@ serving the game exactly as it does now.
 
 ## 6. Play Store checklist
 
-- [ ] Play Console app created under the friend's developer account; app signing key generated.
-- [ ] `assetlinks.json` served with the package name and the **Play App Signing** SHA-256
+- [x] Play Console app created under the friend's developer account; app signing key generated.
+- [x] `assetlinks.json` served with the package name and the **Play App Signing** SHA-256
       (not the local debug key).
 - [ ] `targetSdk` within one year of the latest Android release (Bubblewrap/PWABuilder sets this).
 - [ ] Store listing: title, short/full description, screenshots (phone + tablet), feature graphic,
@@ -150,4 +165,5 @@ serving the game exactly as it does now.
 1. Offline render path: compile `render.rs` to WASM (option 1) or a separate JS renderer (option 2)?
 2. Should offline offer bot difficulty selection + local save/resume, or just a single quick game?
 3. Any desire for a native wrapper later (notifications, deep links), or is TWA the end state?
-4. Package name to use for the Android app (`org.playcatanou.*`?), needed for `assetlinks.json`.
+4. ~~Package name to use for the Android app?~~ Resolved: `org.playcatanou.twa` (kept for the
+   existing Play listing; see [PLAYSTORE-ANDROID.md](PLAYSTORE-ANDROID.md)).
