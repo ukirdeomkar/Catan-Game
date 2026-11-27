@@ -6,18 +6,20 @@ AEAD suites. TLS 1.3 must stay untouched, so `maxVersion` must never appear, and
 the deprecated TLS 1.2 CBC/SHA-1 suites must never be reintroduced.
 
 This test reads the heredoc body out of `.github/workflows/deploy.yml` (no PyYAML
-required) and asserts the invariant, so an accidental edit is caught in CI rather
-than in production.
+required), splits the `tls.options` mapping into per-option blocks, and asserts
+the invariant on *each* option rather than only once across the whole file.
+`default:` is the option that actually covers the pre-existing router, so a suite
+dropped from it must fail even when `catan-aead:` still carries the full list.
 """
 
 import os
 import re
-import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEPLOY = os.path.join(ROOT, ".github", "workflows", "deploy.yml")
 
 HEREDOC_OPEN = re.compile(r"<<'([A-Z0-9_]+)'")
+REQUIRED_OPTIONS = ["catan-aead", "default"]
 AEAD_SUITES = [
     "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
     "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
@@ -68,6 +70,65 @@ def extract_heredoc(lines, marker):
     return [line[common:] if line.strip() else "" for line in body]
 
 
+def split_options(body):
+    """Split the de-indented heredoc body into {option_name: block lines}.
+
+    The heredoc is a small, fixed YAML subset (`tls.options.<name>...`), so an
+    indentation-aware split keeps the guard dependency-free on hosts without
+    PyYAML while still validating each option separately.
+    """
+    options_indent = None
+    option_indent = None
+    options = {}
+    current = None
+    for line in body:
+        stripped = line.strip()
+        if not stripped:
+            if current is not None:
+                options[current].append("")
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if options_indent is None:
+            if stripped == "options:":
+                options_indent = indent
+            continue
+        if indent <= options_indent:
+            current = None
+            continue
+        if stripped.endswith(":") and not stripped.startswith("-"):
+            if option_indent is None:
+                option_indent = indent
+            if indent == option_indent:
+                current = stripped[:-1].strip()
+                options[current] = []
+                continue
+        if current is not None:
+            options[current].append(line)
+    return options
+
+
+def check_option(name, block):
+    """Assert the TLS 1.2 AEAD invariant on a single `tls.options` entry."""
+    block_text = "\n".join(block)
+
+    if not re.search(r"^\s*minVersion:\s*VersionTLS12\s*$", block_text, re.MULTILINE):
+        fail("option %r does not pin minVersion: VersionTLS12" % name)
+
+    for suite in AEAD_SUITES:
+        if suite not in block_text:
+            fail("option %r is missing AEAD suite %s" % (name, suite))
+
+    for forbidden in FORBIDDEN_SUBSTRINGS:
+        if forbidden in block_text:
+            fail(
+                "option %r contains forbidden entry %r (CBC/SHA-1 or a TLS 1.3 cap)"
+                % (name, forbidden)
+            )
+
+    if re.search(r"^\s*maxVersion\s*:", block_text, re.MULTILINE):
+        fail("option %r sets maxVersion; TLS 1.3 would be restricted" % name)
+
+
 def main():
     if not os.path.isfile(DEPLOY):
         raise SystemExit("deploy workflow not found: %s" % DEPLOY)
@@ -90,26 +151,20 @@ def main():
         # the documented marker name.
         tls_marker = "CATAN_TLS_YML"
     body = extract_heredoc(lines, tls_marker)
-    body_text = "\n".join(body)
 
-    if "minVersion: VersionTLS12" not in body_text:
-        fail("the TLS option does not pin minVersion: VersionTLS12")
-    if "catan-aead:" not in body_text or "default:" not in body_text:
-        fail("expected both the named `catan-aead` and the provider `default` option")
+    options = split_options(body)
+    if not options:
+        fail("could not parse any tls.options entries from the heredoc")
 
-    for suite in AEAD_SUITES:
-        if suite not in body_text:
-            fail("missing AEAD suite %s" % suite)
+    for name in REQUIRED_OPTIONS:
+        if name not in options:
+            fail("expected tls.options entry %r is missing" % name)
+        check_option(name, options[name])
 
-    for forbidden in FORBIDDEN_SUBSTRINGS:
-        if forbidden in body_text:
-            fail("forbidden entry %r found in the TLS option (CBC/SHA-1 or a TLS 1.3 cap)" % forbidden)
-
-    # TLS 1.3 must stay available: the file must not cap the max version.
-    if re.search(r"^\s*maxVersion\s*:", body_text, re.MULTILINE):
-        fail("maxVersion is set; TLS 1.3 would be restricted")
-
-    print("PASS: OMK-481 TLS option pins TLS 1.2 AEAD suites and leaves TLS 1.3 intact")
+    print(
+        "PASS: OMK-481 TLS options (%s) each pin TLS 1.2 AEAD suites and leave "
+        "TLS 1.3 intact" % ", ".join(REQUIRED_OPTIONS)
+    )
 
 
 if __name__ == "__main__":
