@@ -602,8 +602,16 @@ jobs:
               fi
             done
             echo "OMK-446: DOCKER-USER rules for :8080 on ${WAN_IF}:"
-            iptables -S DOCKER-USER | grep -- '--ctorigdstport 8080' || true
-            ip6tables -S DOCKER-USER 2>/dev/null | grep -- '--ctorigdstport 8080' || true
+            if ! iptables -S DOCKER-USER | grep -- '--ctorigdstport 8080'; then
+              echo "ERROR: OMK-446 the IPv4 :8080 drop rule is missing after insert" >&2
+              exit 1
+            fi
+            if command -v ip6tables >/dev/null 2>&1; then
+              if ! ip6tables -S DOCKER-USER 2>/dev/null | grep -- '--ctorigdstport 8080'; then
+                echo "ERROR: OMK-446 the IPv6 :8080 drop rule is missing after insert" >&2
+                exit 1
+              fi
+            fi
 
             if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ] || [ ! -d "${TRAEFIK_DYNAMIC_DIR}" ]; then
               echo "ERROR: OMK-446 Traefik dynamic dir unavailable; refusing to skip the HTTPS redirect" >&2
