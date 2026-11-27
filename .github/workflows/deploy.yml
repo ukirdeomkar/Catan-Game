@@ -519,6 +519,66 @@ jobs:
               exit 1
             fi
 
+            echo "=== OMK-446: close public :8080 and redirect HTTP to HTTPS ==="
+            # Traefik reaches the app over the Docker bridge via the published host
+            # port (the TRAEFIK PROBE shows Traefik bridge-networked, not host-network),
+            # so binding the publish to loopback would break BOTH hostnames. Instead we
+            # drop WAN ingress to the published port and leave the Traefik upstream
+            # untouched. Match the ORIGINAL destination port so other containers that
+            # map to container port 8080 (e.g. signal-client 7002->8080) are unaffected.
+            WAN_IF="$(ip route show default 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+            if [ -z "${WAN_IF:-}" ]; then
+              echo "ERROR: OMK-446 could not determine the WAN interface; refusing to leave :8080 open" >&2
+              exit 1
+            fi
+            echo "OMK-446: WAN interface = ${WAN_IF}"
+            if ! iptables -S DOCKER-USER >/dev/null 2>&1; then
+              echo "ERROR: OMK-446 DOCKER-USER chain missing; refusing to report the origin as closed" >&2
+              exit 1
+            fi
+            for cmd in iptables ip6tables; do
+              command -v "$cmd" >/dev/null 2>&1 || continue
+              if ! "$cmd" -C DOCKER-USER -i "$WAN_IF" -p tcp -m conntrack --ctorigdstport 8080 -j DROP 2>/dev/null; then
+                "$cmd" -I DOCKER-USER -i "$WAN_IF" -p tcp -m conntrack --ctorigdstport 8080 -j DROP
+              fi
+            done
+            echo "OMK-446: DOCKER-USER rules for :8080 on ${WAN_IF}:"
+            iptables -S DOCKER-USER | grep -- '--ctorigdstport 8080' || true
+            ip6tables -S DOCKER-USER 2>/dev/null | grep -- '--ctorigdstport 8080' || true
+
+            if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ] || [ ! -d "${TRAEFIK_DYNAMIC_DIR}" ]; then
+              echo "ERROR: OMK-446 Traefik dynamic dir unavailable; refusing to skip the HTTPS redirect" >&2
+              exit 1
+            fi
+            # Additive port-80 -> 443 redirect for both hostnames. The ACME HTTP-01
+            # challenge path is excluded so certificate renewal keeps working.
+            CATAN_REDIRECT_FILE="${TRAEFIK_DYNAMIC_DIR}/catan-redirect.yml"
+            cat > "${CATAN_REDIRECT_FILE}" <<'CATAN_REDIRECT_YML'
+            http:
+              routers:
+                catan-http-redirect-play:
+                  rule: "Host(`playcatanou.duckdns.org`) && !PathPrefix(`/.well-known/acme-challenge/`)"
+                  entryPoints: ["web"]
+                  middlewares: ["catan-https-redirect"]
+                  service: catan-redirect-noop
+                catan-http-redirect-hex:
+                  rule: "Host(`hexports.duckdns.org`) && !PathPrefix(`/.well-known/acme-challenge/`)"
+                  entryPoints: ["web"]
+                  middlewares: ["catan-https-redirect"]
+                  service: catan-redirect-noop
+              middlewares:
+                catan-https-redirect:
+                  redirectScheme:
+                    scheme: https
+                    permanent: true
+              services:
+                catan-redirect-noop:
+                  loadBalancer:
+                    servers:
+                      - url: "http://127.0.0.1"
+            CATAN_REDIRECT_YML
+            echo "OMK-446: wrote ${CATAN_REDIRECT_FILE}"
+
             echo "--- hexports/playcatanou smoke check (non-fatal; Traefik watch + ACME may lag) ---"
             sleep 10
             curl -sSI --max-time 20 https://hexports.duckdns.org/ || true
