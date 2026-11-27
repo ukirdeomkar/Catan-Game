@@ -101,6 +101,16 @@ jobs:
             docker compose pull catan
             docker compose up -d
 
+      # OMK-446: this is a separate SSH step so each `script:` scalar stays under
+      # GitHub Actions' 21,000-character expression limit. It only needs Docker,
+      # python3, iptables and curl on the host (no registry login).
+      - name: Configure Traefik routes and close public :8080 (OMK-446)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
             echo "=== OMK-646: add hexports.duckdns.org Traefik route (additive, idempotent) ==="
             TRAEFIK_DYNAMIC_DIR="$(docker inspect traefik --format '{{range .Mounts}}{{if eq .Destination "/dynamic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
             if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ]; then
@@ -179,6 +189,48 @@ jobs:
                 return False
 
 
+            LOOPBACK_HOST_RE = re.compile(
+                r"^(?:127(?:\.\d{1,3}){3}|localhost|0\.0\.0\.0|\[::1\]|\[::\])(?::\d+)?$",
+                re.IGNORECASE,
+            )
+
+
+            def is_loopback_url(url):
+                """True when a load-balancer target points back at the host itself.
+
+                A redirect/noop router (OMK-446) uses a loopback upstream. It must
+                never be mistaken for the real app service when we reuse the
+                playcatanou route; otherwise hexports would be repointed at
+                http://127.0.0.1 and return 502 on the next deploy.
+                """
+                if not isinstance(url, str):
+                    return False
+                match = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]+)", url.strip())
+                if not match:
+                    return False
+                return bool(LOOPBACK_HOST_RE.match(match.group(1)))
+
+
+            def router_serves_app(router):
+                """Only a plain websecure app router may be reused as the upstream.
+
+                A redirect router declares middlewares and listens on `web`; reusing
+                it would pick its noop service instead of the real app service.
+                """
+                if not isinstance(router, dict):
+                    return False
+                if router.get("middlewares"):
+                    return False
+                entrypoints = router.get("entryPoints")
+                if entrypoints is None:
+                    entrypoints = router.get("entrypoints")
+                if isinstance(entrypoints, list) and entrypoints:
+                    names = [str(item).strip().lower() for item in entrypoints]
+                    if "websecure" not in names:
+                        return False
+                return True
+
+
             def dynamic_files(dynamic_dir, target_path):
                 """All .yml/.yaml files in the dynamic dir except the file we manage."""
                 target = os.path.realpath(target_path)
@@ -226,6 +278,8 @@ jobs:
                             continue
                         if not rule_matches_canonical(router.get("rule")):
                             continue
+                        if not router_serves_app(router):
+                            continue
                         service = router.get("service")
                         if isinstance(service, str) and service.strip():
                             name = service.strip()
@@ -253,7 +307,10 @@ jobs:
                             if isinstance(server, dict):
                                 url = server.get("url")
                                 if isinstance(url, str) and url.strip():
-                                    return candidate, url.strip()
+                                    url = url.strip()
+                                    if is_loopback_url(url):
+                                        continue
+                                    return candidate, url
                 return first_name, None
 
 
@@ -336,11 +393,14 @@ jobs:
                         if router_position is None:
                             continue
                         start, end = block_slice(entries, router_position)
+                        router_is_redirect = False
                         for inner in entries[router_position + 1:]:
                             if end is not None and inner["index"] >= end:
                                 break
+                            if inner["key"] == "middlewares":
+                                router_is_redirect = True
                             if inner["key"] == "service" and inner["value"]:
-                                if inner["value"] not in candidates:
+                                if not router_is_redirect and inner["value"] not in candidates:
                                     candidates.append(inner["value"])
                                 break
 
@@ -365,6 +425,8 @@ jobs:
                                 if end is not None and inner["index"] >= end:
                                     break
                                 if inner["key"] == "url" and inner["value"]:
+                                    if is_loopback_url(inner["value"]):
+                                        break
                                     return candidate, inner["value"]
                 return first_name, None
 
@@ -518,6 +580,102 @@ jobs:
               echo "ERROR: could not add the hexports Traefik route; refusing to continue" >&2
               exit 1
             fi
+
+      # OMK-446 rollback: runtime state is NOT removed by a revert + redeploy.
+      #   rm -f <traefik-dynamic-dir>/catan-redirect.yml
+      #   iptables -D DOCKER-USER -i <wan-if> -p tcp -m conntrack --ctorigdstport 8080 -j DROP
+      #   ip6tables -D DOCKER-USER -i <wan-if> -p tcp -m conntrack --ctorigdstport 8080 -j DROP
+      - name: Close public :8080 and redirect HTTP to HTTPS (OMK-446)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "=== OMK-446: close public :8080 and redirect HTTP to HTTPS ==="
+            # Separate SSH session: recompute the Traefik dynamic dir (same fallback
+            # as the hexports step) before verifying it below.
+            TRAEFIK_DYNAMIC_DIR="$(docker inspect traefik --format '{{range .Mounts}}{{if eq .Destination "/dynamic"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+            if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ]; then
+              TRAEFIK_DYNAMIC_DIR=/root/traefik/dynamic
+            fi
+            # Traefik reaches the app over the Docker bridge via the published host
+            # port (the TRAEFIK PROBE shows Traefik bridge-networked, not host-network),
+            # so binding the publish to loopback would break BOTH hostnames. Instead we
+            # drop WAN ingress to the published port and leave the Traefik upstream
+            # untouched. Match the ORIGINAL destination port so other containers that
+            # map to container port 8080 (e.g. signal-client 7002->8080) are unaffected.
+            WAN_IF="$(ip route show default 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+            if [ -z "${WAN_IF:-}" ]; then
+              echo "ERROR: OMK-446 could not determine the WAN interface; refusing to leave :8080 open" >&2
+              exit 1
+            fi
+            echo "OMK-446: WAN interface = ${WAN_IF}"
+            if ! command -v iptables >/dev/null 2>&1; then
+              echo "ERROR: OMK-446 iptables is not available; refusing to leave :8080 open" >&2
+              exit 1
+            fi
+            for cmd in iptables ip6tables; do
+              command -v "$cmd" >/dev/null 2>&1 || continue
+              if ! "$cmd" -S DOCKER-USER >/dev/null 2>&1; then
+                echo "ERROR: OMK-446 $cmd DOCKER-USER chain missing; refusing to report the origin as closed" >&2
+                exit 1
+              fi
+              if ! "$cmd" -C DOCKER-USER -i "$WAN_IF" -p tcp -m conntrack --ctorigdstport 8080 -j DROP 2>/dev/null; then
+                if ! "$cmd" -I DOCKER-USER -i "$WAN_IF" -p tcp -m conntrack --ctorigdstport 8080 -j DROP; then
+                  echo "ERROR: OMK-446 failed to insert the $cmd :8080 drop rule" >&2
+                  exit 1
+                fi
+              fi
+            done
+            echo "OMK-446: DOCKER-USER rules for :8080 on ${WAN_IF}:"
+            if ! iptables -S DOCKER-USER | grep -- '--ctorigdstport 8080'; then
+              echo "ERROR: OMK-446 the IPv4 :8080 drop rule is missing after insert" >&2
+              exit 1
+            fi
+            if command -v ip6tables >/dev/null 2>&1; then
+              if ! ip6tables -S DOCKER-USER 2>/dev/null | grep -- '--ctorigdstport 8080'; then
+                echo "ERROR: OMK-446 the IPv6 :8080 drop rule is missing after insert" >&2
+                exit 1
+              fi
+            fi
+
+            if [ -z "${TRAEFIK_DYNAMIC_DIR:-}" ] || [ ! -d "${TRAEFIK_DYNAMIC_DIR}" ]; then
+              echo "ERROR: OMK-446 Traefik dynamic dir unavailable; refusing to skip the HTTPS redirect" >&2
+              exit 1
+            fi
+            # Additive port-80 -> 443 redirect for both hostnames. The ACME HTTP-01
+            # challenge path is excluded so certificate renewal keeps working.
+            CATAN_REDIRECT_FILE="${TRAEFIK_DYNAMIC_DIR}/catan-redirect.yml"
+            cat > "${CATAN_REDIRECT_FILE}" <<'CATAN_REDIRECT_YML'
+            http:
+              routers:
+                catan-http-redirect-play:
+                  rule: "Host(`playcatanou.duckdns.org`) && !PathPrefix(`/.well-known/acme-challenge/`)"
+                  entryPoints: ["web"]
+                  middlewares: ["catan-https-redirect"]
+                  service: catan-redirect-noop
+                catan-http-redirect-hex:
+                  rule: "Host(`hexports.duckdns.org`) && !PathPrefix(`/.well-known/acme-challenge/`)"
+                  entryPoints: ["web"]
+                  middlewares: ["catan-https-redirect"]
+                  service: catan-redirect-noop
+              middlewares:
+                catan-https-redirect:
+                  redirectScheme:
+                    scheme: https
+                    permanent: true
+              services:
+                catan-redirect-noop:
+                  loadBalancer:
+                    servers:
+                      - url: "http://127.0.0.1"
+            CATAN_REDIRECT_YML
+            if [ ! -s "${CATAN_REDIRECT_FILE}" ]; then
+              echo "ERROR: OMK-446 could not write ${CATAN_REDIRECT_FILE}" >&2
+              exit 1
+            fi
+            echo "OMK-446: wrote ${CATAN_REDIRECT_FILE}"
 
             echo "--- hexports/playcatanou smoke check (non-fatal; Traefik watch + ACME may lag) ---"
             sleep 10
